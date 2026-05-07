@@ -32,6 +32,9 @@ class Config:
                 "port": 8080,
                 "log_level": "INFO"
             },
+            "github": {
+                "enabled": True
+            },
             "qdrant": {
                 "host": "localhost",
                 "port": 6333,
@@ -130,6 +133,7 @@ class Config:
         """Apply environment variables to configuration"""
         # Map of config paths to environment variables
         env_mappings = {
+            "github.enabled": "GITHUB_ENABLED",
             "server.port": "SERVER_PORT",
             "server.log_level": "LOG_LEVEL",
             "qdrant.host": "QDRANT_HOST",

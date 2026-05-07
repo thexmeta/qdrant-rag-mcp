@@ -84,6 +84,18 @@ from github_integration import PROJECTS_AVAILABLE, get_projects_manager
 # Initialize FastMCP server
 mcp = FastMCP("qdrant-rag-context")
 
+# Read config early to determine if GitHub tools should be registered
+early_config = get_config()
+GITHUB_ENABLED = early_config.get("github", {}).get("enabled", True)
+
+def optional_mcp_tool(enabled=True):
+    """Conditionally applies @mcp.tool() based on enabled flag"""
+    def decorator(func):
+        if enabled:
+            return mcp.tool()(func)
+        return func
+    return decorator
+
 # Configure basic console logging for startup messages
 logging.basicConfig(
     level=logging.INFO,
@@ -5224,1737 +5236,1740 @@ def validate_github_prerequisites(require_projects=False, require_repo=False):
     return None, (github_client, issue_analyzer, code_generator, workflows, projects_manager)
 
 
-# GitHub MCP Tools
-@mcp.tool()
-@github_operation("list repositories")
-def github_list_repositories(owner: Optional[str] = None) -> Dict[str, Any]:
-    """
-    List GitHub repositories for a user/organization.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "list my repositories" or "show repos"
-    - Need to find a specific repository
-    - Before switching to a repository
-    - Exploring available projects
-    - User asks "what repos do I have access to?"
-    
-    This tool automatically:
-    - Fetches repositories from GitHub API
-    - Shows public and private repos (based on auth)
-    - Returns repository names, descriptions, and URLs
-    - Lists recent activity information
-    
-    Args:
-        owner: Repository owner (defaults to authenticated user)
-        
-    Returns:
-        List of repository information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    repositories = github_client.list_repositories(owner)
-    
-    return {
-        "repositories": repositories,
-        "count": len(repositories),
-        "owner": owner or "authenticated_user"
-    }
+if GITHUB_ENABLED:
+    # GitHub MCP Tools
+        @mcp.tool()
+        @github_operation("list repositories")
+        def github_list_repositories(owner: Optional[str] = None) -> Dict[str, Any]:
+            """
+            List GitHub repositories for a user/organization.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "list my repositories" or "show repos"
+            - Need to find a specific repository
+            - Before switching to a repository
+            - Exploring available projects
+            - User asks "what repos do I have access to?"
+
+            This tool automatically:
+            - Fetches repositories from GitHub API
+            - Shows public and private repos (based on auth)
+            - Returns repository names, descriptions, and URLs
+            - Lists recent activity information
+
+            Args:
+                owner: Repository owner (defaults to authenticated user)
+
+            Returns:
+                List of repository information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+            repositories = github_client.list_repositories(owner)
+
+            return {
+                "repositories": repositories,
+                "count": len(repositories),
+                "owner": owner or "authenticated_user"
+            }
 
 
-@mcp.tool()
-@github_operation("switch repository")
-def github_switch_repository(owner: str, repo: str) -> Dict[str, Any]:
-    """
-    Switch to a different GitHub repository context.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "switch to repo X" or "work on repository Y"
-    - Before working with GitHub issues or PRs
-    - Changing GitHub project context
-    - After listing repositories
-    - User provides "owner/repo" format
-    
-    This tool automatically:
-    - Sets the active GitHub repository
-    - Verifies repository access
-    - Updates context for issue/PR operations
-    - Returns repository details
-    - Enables GitHub-specific features
-    
-    Args:
-        owner: Repository owner
-        repo: Repository name
-        
-    Returns:
-        Repository information and switch status
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    repository = github_client.set_repository(owner, repo)
-    
-    # Optional: Auto-index repository if configured
-    config = get_config()
-    if config.get("github", {}).get("repository", {}).get("auto_index_on_switch", True):
-        try:
-            # This would trigger repository indexing - placeholder for now
-            console_logger.info(f"Auto-indexing enabled for {owner}/{repo} (feature not yet implemented)")
-        except Exception as e:
-            console_logger.warning(f"Auto-indexing failed for {owner}/{repo}: {e}")
-    
-    return {
-        "repository": {
-            "owner": owner,
-            "name": repo,
-            "full_name": repository.full_name,
-            "description": repository.description,
-            "private": repository.private,
-            "language": repository.language,
-            "stars": repository.stargazers_count,
-            "forks": repository.forks_count
-        },
-        "message": f"Successfully switched to {owner}/{repo}"
-    }
+        @mcp.tool()
+        @github_operation("switch repository")
+        def github_switch_repository(owner: str, repo: str) -> Dict[str, Any]:
+            """
+            Switch to a different GitHub repository context.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "switch to repo X" or "work on repository Y"
+            - Before working with GitHub issues or PRs
+            - Changing GitHub project context
+            - After listing repositories
+            - User provides "owner/repo" format
+
+            This tool automatically:
+            - Sets the active GitHub repository
+            - Verifies repository access
+            - Updates context for issue/PR operations
+            - Returns repository details
+            - Enables GitHub-specific features
+
+            Args:
+                owner: Repository owner
+                repo: Repository name
+
+            Returns:
+                Repository information and switch status
+            """
+            github_client, _, _, _, _ = get_github_instances()
+            repository = github_client.set_repository(owner, repo)
+
+            # Optional: Auto-index repository if configured
+            config = get_config()
+            if config.get("github", {}).get("repository", {}).get("auto_index_on_switch", True):
+                try:
+                    # This would trigger repository indexing - placeholder for now
+                    console_logger.info(f"Auto-indexing enabled for {owner}/{repo} (feature not yet implemented)")
+                except Exception as e:
+                    console_logger.warning(f"Auto-indexing failed for {owner}/{repo}: {e}")
+
+            return {
+                "repository": {
+                    "owner": owner,
+                    "name": repo,
+                    "full_name": repository.full_name,
+                    "description": repository.description,
+                    "private": repository.private,
+                    "language": repository.language,
+                    "stars": repository.stargazers_count,
+                    "forks": repository.forks_count
+                },
+                "message": f"Successfully switched to {owner}/{repo}"
+            }
 
 
-@mcp.tool()
-@github_operation("fetch issues", require_repo=True)
-def github_fetch_issues(state: str = "open", labels: Optional[List[str]] = None,
-                       milestone: Optional[str] = None, assignee: Optional[str] = None,
-                       since: Optional[str] = None, sort: str = "created",
-                       direction: str = "desc", limit: Optional[int] = None) -> Dict[str, Any]:
-    """
-    Fetch GitHub issues from current repository with enhanced filtering.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "show issues" or "list bugs"
-    - Looking for work items or tasks
-    - User asks "what issues are open?"
-    - Filtering issues by label, milestone, or assignee
-    - Finding unassigned issues ("assignee=none")
-    - Before analyzing or working on issues
-    
-    This tool automatically:
-    - Fetches issues from current repository
-    - Filters by state (open/closed/all)
-    - Filters by labels if specified
-    - Filters by milestone (name or number)
-    - Filters by assignee (username or "none")
-    - Filters by date (created/updated since)
-    - Returns issue titles, numbers, and metadata
-    - Includes assignees and timestamps
-    
-    Args:
-        state: Issue state (open, closed, all)
-        labels: Filter by labels
-        milestone: Filter by milestone (title or number)
-        assignee: Filter by assignee username (or "none" for unassigned)
-        since: Filter by created/updated date (ISO format)
-        sort: Sort by (created, updated, comments)
-        direction: Sort direction (asc, desc)
-        limit: Maximum number of issues
-        
-    Returns:
-        List of issue information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    issues = github_client.get_issues(
-        state=state, labels=labels, milestone=milestone,
-        assignee=assignee, since=since, sort=sort,
-        direction=direction, limit=limit
-    )
-    
-    console_logger.info(
-        f"Fetched {len(issues)} issues",
-        extra={
-            "operation": "github_fetch_issues",
-            "state": state,
-            "labels": labels,
-            "count": len(issues)
-        }
-    )
-    
-    return {
-        "issues": issues,
-        "count": len(issues),
-        "state": state,
-        "labels": labels,
-        "repository": github_client.get_current_repository().full_name
-    }
+        @mcp.tool()
+        @github_operation("fetch issues", require_repo=True)
+        def github_fetch_issues(state: str = "open", labels: Optional[List[str]] = None,
+                               milestone: Optional[str] = None, assignee: Optional[str] = None,
+                               since: Optional[str] = None, sort: str = "created",
+                               direction: str = "desc", limit: Optional[int] = None) -> Dict[str, Any]:
+            """
+            Fetch GitHub issues from current repository with enhanced filtering.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "show issues" or "list bugs"
+            - Looking for work items or tasks
+            - User asks "what issues are open?"
+            - Filtering issues by label, milestone, or assignee
+            - Finding unassigned issues ("assignee=none")
+            - Before analyzing or working on issues
+
+            This tool automatically:
+            - Fetches issues from current repository
+            - Filters by state (open/closed/all)
+            - Filters by labels if specified
+            - Filters by milestone (name or number)
+            - Filters by assignee (username or "none")
+            - Filters by date (created/updated since)
+            - Returns issue titles, numbers, and metadata
+            - Includes assignees and timestamps
+
+            Args:
+                state: Issue state (open, closed, all)
+                labels: Filter by labels
+                milestone: Filter by milestone (title or number)
+                assignee: Filter by assignee username (or "none" for unassigned)
+                since: Filter by created/updated date (ISO format)
+                sort: Sort by (created, updated, comments)
+                direction: Sort direction (asc, desc)
+                limit: Maximum number of issues
+
+            Returns:
+                List of issue information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            issues = github_client.get_issues(
+                state=state, labels=labels, milestone=milestone,
+                assignee=assignee, since=since, sort=sort,
+                direction=direction, limit=limit
+            )
+
+            console_logger.info(
+                f"Fetched {len(issues)} issues",
+                extra={
+                    "operation": "github_fetch_issues",
+                    "state": state,
+                    "labels": labels,
+                    "count": len(issues)
+                }
+            )
+
+            return {
+                "issues": issues,
+                "count": len(issues),
+                "state": state,
+                "labels": labels,
+                "repository": github_client.get_current_repository().full_name
+            }
 
 
-@mcp.tool()
-@github_operation("get issue", require_repo=True)
-def github_get_issue(issue_number: int) -> Dict[str, Any]:
-    """
-    Get detailed information about a specific GitHub issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks about "issue #123" specifically
-    - Need full details about an issue
-    - Before analyzing or fixing an issue
-    - Getting issue description and comments
-    - User asks "what is issue X about?"
-    
-    This tool automatically:
-    - Fetches complete issue details
-    - Includes issue body and comments
-    - Shows labels, assignees, and status
-    - Returns creation and update timestamps
-    - Provides full context for analysis
-    
-    Args:
-        issue_number: Issue number
-        
-    Returns:
-        Detailed issue information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    issue = github_client.get_issue(issue_number)
-    
-    console_logger.info(
-        f"Retrieved issue #{issue_number}",
-        extra={
-            "operation": "github_get_issue",
-            "issue_number": issue_number,
-            "title": issue["title"]
-        }
-    )
-    
-    return {
-        "issue": issue,
-        "repository": github_client.get_current_repository().full_name
-    }
+        @mcp.tool()
+        @github_operation("get issue", require_repo=True)
+        def github_get_issue(issue_number: int) -> Dict[str, Any]:
+            """
+            Get detailed information about a specific GitHub issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks about "issue #123" specifically
+            - Need full details about an issue
+            - Before analyzing or fixing an issue
+            - Getting issue description and comments
+            - User asks "what is issue X about?"
+
+            This tool automatically:
+            - Fetches complete issue details
+            - Includes issue body and comments
+            - Shows labels, assignees, and status
+            - Returns creation and update timestamps
+            - Provides full context for analysis
+
+            Args:
+                issue_number: Issue number
+
+            Returns:
+                Detailed issue information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            issue = github_client.get_issue(issue_number)
+
+            console_logger.info(
+                f"Retrieved issue #{issue_number}",
+                extra={
+                    "operation": "github_get_issue",
+                    "issue_number": issue_number,
+                    "title": issue["title"]
+                }
+            )
+
+            return {
+                "issue": issue,
+                "repository": github_client.get_current_repository().full_name
+            }
 
 
-@mcp.tool()
-@github_operation("create issue", require_repo=True)
-def github_create_issue(title: str, body: str = "", labels: Optional[List[str]] = None,
-                       assignees: Optional[List[str]] = None) -> Dict[str, Any]:
-    """
-    Create a new GitHub issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "create an issue" or "file a bug"
-    - Documenting a problem or feature request
-    - Creating work items or tasks
-    - User provides issue title and description
-    - Tracking TODOs or improvements
-    
-    This tool automatically:
-    - Creates issue in current repository
-    - Applies specified labels
-    - Assigns to specified users
-    - Returns issue number and URL
-    - Enables tracking and collaboration
-    
-    Args:
-        title: Issue title
-        body: Issue description/body (optional)
-        labels: List of label names to apply (optional)
-        assignees: List of usernames to assign (optional)
-        
-    Returns:
-        Created issue information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    issue = github_client.create_issue(title, body, labels, assignees)
-    
-    console_logger.info(
-        f"Created issue #{issue['number']}: {title}",
-        extra={
-            "operation": "github_create_issue",
-            "issue_number": issue["number"],
-            "title": title,
-            "labels": labels or [],
-            "assignees": assignees or []
-        }
-    )
-    
-    return {
-        "issue": issue,
-        "repository": github_client.get_current_repository().full_name,
-        "message": f"Successfully created issue #{issue['number']}"
-    }
+        @mcp.tool()
+        @github_operation("create issue", require_repo=True)
+        def github_create_issue(title: str, body: str = "", labels: Optional[List[str]] = None,
+                               assignees: Optional[List[str]] = None) -> Dict[str, Any]:
+            """
+            Create a new GitHub issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "create an issue" or "file a bug"
+            - Documenting a problem or feature request
+            - Creating work items or tasks
+            - User provides issue title and description
+            - Tracking TODOs or improvements
+
+            This tool automatically:
+            - Creates issue in current repository
+            - Applies specified labels
+            - Assigns to specified users
+            - Returns issue number and URL
+            - Enables tracking and collaboration
+
+            Args:
+                title: Issue title
+                body: Issue description/body (optional)
+                labels: List of label names to apply (optional)
+                assignees: List of usernames to assign (optional)
+
+            Returns:
+                Created issue information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            issue = github_client.create_issue(title, body, labels, assignees)
+
+            console_logger.info(
+                f"Created issue #{issue['number']}: {title}",
+                extra={
+                    "operation": "github_create_issue",
+                    "issue_number": issue["number"],
+                    "title": title,
+                    "labels": labels or [],
+                    "assignees": assignees or []
+                }
+            )
+
+            return {
+                "issue": issue,
+                "repository": github_client.get_current_repository().full_name,
+                "message": f"Successfully created issue #{issue['number']}"
+            }
 
 
-@mcp.tool()
-@github_operation("add comment", require_repo=True)
-def github_add_comment(issue_number: int, body: str) -> Dict[str, Any]:
-    """
-    Add a comment to an existing GitHub issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "add a comment to issue #X"
-    - User wants to "comment on issue #X"
-    - Providing updates or feedback on an issue
-    - Adding additional context or information
-    - Responding to issue discussions
-    
-    This tool automatically:
-    - Adds comment to the specified issue
-    - Returns comment ID and creation time
-    - Updates issue activity timestamp
-    - Notifies issue watchers
-    
-    Args:
-        issue_number: Issue number to comment on
-        body: Comment body text
-        
-    Returns:
-        Comment information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    comment = github_client.add_comment(issue_number, body)
-    
-    console_logger.info(
-        f"Added comment to issue #{issue_number}",
-        extra={
-            "operation": "github_add_comment",
-            "issue_number": issue_number,
-            "comment_id": comment["id"]
-        }
-    )
-    
-    return {
-        "comment": comment,
-        "repository": github_client.get_current_repository().full_name,
-        "message": f"Successfully added comment to issue #{issue_number}"
-    }
+        @mcp.tool()
+        @github_operation("add comment", require_repo=True)
+        def github_add_comment(issue_number: int, body: str) -> Dict[str, Any]:
+            """
+            Add a comment to an existing GitHub issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "add a comment to issue #X"
+            - User wants to "comment on issue #X"
+            - Providing updates or feedback on an issue
+            - Adding additional context or information
+            - Responding to issue discussions
+
+            This tool automatically:
+            - Adds comment to the specified issue
+            - Returns comment ID and creation time
+            - Updates issue activity timestamp
+            - Notifies issue watchers
+
+            Args:
+                issue_number: Issue number to comment on
+                body: Comment body text
+
+            Returns:
+                Comment information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            comment = github_client.add_comment(issue_number, body)
+
+            console_logger.info(
+                f"Added comment to issue #{issue_number}",
+                extra={
+                    "operation": "github_add_comment",
+                    "issue_number": issue_number,
+                    "comment_id": comment["id"]
+                }
+            )
+
+            return {
+                "comment": comment,
+                "repository": github_client.get_current_repository().full_name,
+                "message": f"Successfully added comment to issue #{issue_number}"
+            }
 
 
-@mcp.tool()
-@github_operation("analyze issue", require_repo=True)
-def github_analyze_issue(issue_number: int) -> Dict[str, Any]:
-    """
-    Perform comprehensive analysis of a GitHub issue using RAG search.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "analyze issue #X"
-    - User asks "what is issue #X about?"
-    - User asks for "issue analysis", "investigate issue", "understand issue"
-    - User wants to know what code/files are related to an issue
-    - ALWAYS use this instead of manual search when analyzing GitHub issues
-    
-    This tool automatically:
-    - Fetches issue details and comments
-    - Extracts errors, code references, and keywords
-    - Performs optimized RAG searches with progressive context
-    - Returns summarized analysis with recommendations
-    
-    Args:
-        issue_number: Issue number to analyze
-        
-    Returns:
-        Analysis results with search results and recommendations
-    """
-    github_client, _, _, workflows, _ = get_github_instances()
-    
-    # Run analysis workflow
-    result = workflows.analyze_issue_workflow(issue_number)
-    
-    console_logger.info(
-        f"Analyzed issue #{issue_number}",
-        extra={
-            "operation": "github_analyze_issue",
-            "issue_number": issue_number,
-            "workflow_status": result.get("workflow_status"),
-            "confidence": result.get("analysis", {}).get("analysis", {}).get("confidence_score", 0)
-        }
-    )
-    
-    return result
+        @mcp.tool()
+        @github_operation("analyze issue", require_repo=True)
+        def github_analyze_issue(issue_number: int) -> Dict[str, Any]:
+            """
+            Perform comprehensive analysis of a GitHub issue using RAG search.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "analyze issue #X"
+            - User asks "what is issue #X about?"
+            - User asks for "issue analysis", "investigate issue", "understand issue"
+            - User wants to know what code/files are related to an issue
+            - ALWAYS use this instead of manual search when analyzing GitHub issues
+
+            This tool automatically:
+            - Fetches issue details and comments
+            - Extracts errors, code references, and keywords
+            - Performs optimized RAG searches with progressive context
+            - Returns summarized analysis with recommendations
+
+            Args:
+                issue_number: Issue number to analyze
+
+            Returns:
+                Analysis results with search results and recommendations
+            """
+            github_client, _, _, workflows, _ = get_github_instances()
+
+            # Run analysis workflow
+            result = workflows.analyze_issue_workflow(issue_number)
+
+            console_logger.info(
+                f"Analyzed issue #{issue_number}",
+                extra={
+                    "operation": "github_analyze_issue",
+                    "issue_number": issue_number,
+                    "workflow_status": result.get("workflow_status"),
+                    "confidence": result.get("analysis", {}).get("analysis", {}).get("confidence_score", 0)
+                }
+            )
+
+            return result
 
 
-@mcp.tool()
-@github_operation("suggest fix", require_repo=True)
-def github_suggest_fix(issue_number: int) -> Dict[str, Any]:
-    """
-    Generate fix suggestions for a GitHub issue using RAG analysis.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "suggest a fix for issue #X"
-    - User asks "how to fix issue #X"
-    - User asks for "fix suggestions", "solution", "implementation plan"
-    - User wants code changes to resolve an issue
-    - Use AFTER github_analyze_issue for best results
-    
-    This tool automatically:
-    - Analyzes the issue with RAG search
-    - Generates concrete fix suggestions
-    - Provides implementation steps
-    - Suggests code changes with context
-    
-    Args:
-        issue_number: Issue number
-        
-    Returns:
-        Fix suggestions and implementation plan
-    """
-    _, _, _, workflows, _ = get_github_instances()
-    
-    # Run fix suggestion workflow
-    result = workflows.suggest_fix_workflow(issue_number)
-    
-    console_logger.info(
-        f"Generated fix suggestions for issue #{issue_number}",
-        extra={
-            "operation": "github_suggest_fix",
-            "issue_number": issue_number,
-            "workflow_status": result.get("workflow_status"),
-            "fix_count": len(result.get("suggestions", {}).get("fixes", [])),
-            "confidence": result.get("suggestions", {}).get("confidence_level", "unknown")
-        }
-    )
-    
-    return result
+        @mcp.tool()
+        @github_operation("suggest fix", require_repo=True)
+        def github_suggest_fix(issue_number: int) -> Dict[str, Any]:
+            """
+            Generate fix suggestions for a GitHub issue using RAG analysis.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "suggest a fix for issue #X"
+            - User asks "how to fix issue #X"
+            - User asks for "fix suggestions", "solution", "implementation plan"
+            - User wants code changes to resolve an issue
+            - Use AFTER github_analyze_issue for best results
+
+            This tool automatically:
+            - Analyzes the issue with RAG search
+            - Generates concrete fix suggestions
+            - Provides implementation steps
+            - Suggests code changes with context
+
+            Args:
+                issue_number: Issue number
+
+            Returns:
+                Fix suggestions and implementation plan
+            """
+            _, _, _, workflows, _ = get_github_instances()
+
+            # Run fix suggestion workflow
+            result = workflows.suggest_fix_workflow(issue_number)
+
+            console_logger.info(
+                f"Generated fix suggestions for issue #{issue_number}",
+                extra={
+                    "operation": "github_suggest_fix",
+                    "issue_number": issue_number,
+                    "workflow_status": result.get("workflow_status"),
+                    "fix_count": len(result.get("suggestions", {}).get("fixes", [])),
+                    "confidence": result.get("suggestions", {}).get("confidence_level", "unknown")
+                }
+            )
+
+            return result
 
 
-@mcp.tool()
-@github_operation("create pull request", require_repo=True)
-def github_create_pull_request(title: str, body: str, head: str, base: str = "main",
-                              files: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
-    """
-    Create a GitHub pull request.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "create a pull request" or "create a PR"
-    - User wants to submit code changes for review
-    - After making changes on a feature branch
-    - User provides PR title, description, and branch names
-    - Proposing changes to be merged
-    
-    This tool automatically:
-    - Creates a pull request in the current repository
-    - Sets source (head) and target (base) branches
-    - Includes PR description and metadata
-    - Returns PR number and URL
-    - Enables code review workflow
-    
-    Args:
-        title: PR title
-        body: PR description
-        head: Head branch (source branch with changes)
-        base: Base branch (target branch, default: main)
-        files: List of files to include (for reference only)
-        
-    Returns:
-        Pull request information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Create pull request
-    pr = github_client.create_pull_request(
-        title=title,
-        body=body,
-        head=head,
-        base=base,
-        files=files
-    )
-    
-    console_logger.info(
-        f"Created pull request #{pr['number']}",
-        extra={
-            "operation": "github_create_pull_request",
-            "pr_number": pr["number"],
-            "title": title,
-            "head": head,
-            "base": base
-        }
-    )
-    
-    return {
-        "pull_request": pr,
-        "repository": github_client.get_current_repository().full_name,
-        "message": f"Successfully created PR #{pr['number']}"
-    }
+        @mcp.tool()
+        @github_operation("create pull request", require_repo=True)
+        def github_create_pull_request(title: str, body: str, head: str, base: str = "main",
+                                      files: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+            """
+            Create a GitHub pull request.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "create a pull request" or "create a PR"
+            - User wants to submit code changes for review
+            - After making changes on a feature branch
+            - User provides PR title, description, and branch names
+            - Proposing changes to be merged
+
+            This tool automatically:
+            - Creates a pull request in the current repository
+            - Sets source (head) and target (base) branches
+            - Includes PR description and metadata
+            - Returns PR number and URL
+            - Enables code review workflow
+
+            Args:
+                title: PR title
+                body: PR description
+                head: Head branch (source branch with changes)
+                base: Base branch (target branch, default: main)
+                files: List of files to include (for reference only)
+
+            Returns:
+                Pull request information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Create pull request
+            pr = github_client.create_pull_request(
+                title=title,
+                body=body,
+                head=head,
+                base=base,
+                files=files
+            )
+
+            console_logger.info(
+                f"Created pull request #{pr['number']}",
+                extra={
+                    "operation": "github_create_pull_request",
+                    "pr_number": pr["number"],
+                    "title": title,
+                    "head": head,
+                    "base": base
+                }
+            )
+
+            return {
+                "pull_request": pr,
+                "repository": github_client.get_current_repository().full_name,
+                "message": f"Successfully created PR #{pr['number']}"
+            }
 
 
-@mcp.tool()
-@github_operation("resolve issue", require_repo=True)
-def github_resolve_issue(issue_number: int, dry_run: bool = True) -> Dict[str, Any]:
-    """
-    Attempt to resolve a GitHub issue with automated analysis and PR creation.
-    
-    Args:
-        issue_number: Issue number to resolve
-        dry_run: If True, only show what would be done (default: True for safety)
-        
-    Returns:
-        Resolution workflow results
-    """
-    _, _, _, workflows, _ = get_github_instances()
-    
-    # Run complete resolution workflow
-    result = workflows.resolve_issue_workflow(issue_number, dry_run=dry_run)
-    
-    console_logger.info(
-        f"Issue resolution workflow for #{issue_number} (dry_run={dry_run})",
-        extra={
-            "operation": "github_resolve_issue",
-            "issue_number": issue_number,
-            "dry_run": dry_run,
-            "workflow_status": result.get("workflow_status")
-        }
-    )
-    
-    return result
+        @mcp.tool()
+        @github_operation("resolve issue", require_repo=True)
+        def github_resolve_issue(issue_number: int, dry_run: bool = True) -> Dict[str, Any]:
+            """
+            Attempt to resolve a GitHub issue with automated analysis and PR creation.
+
+            Args:
+                issue_number: Issue number to resolve
+                dry_run: If True, only show what would be done (default: True for safety)
+
+            Returns:
+                Resolution workflow results
+            """
+            _, _, _, workflows, _ = get_github_instances()
+
+            # Run complete resolution workflow
+            result = workflows.resolve_issue_workflow(issue_number, dry_run=dry_run)
+
+            console_logger.info(
+                f"Issue resolution workflow for #{issue_number} (dry_run={dry_run})",
+                extra={
+                    "operation": "github_resolve_issue",
+                    "issue_number": issue_number,
+                    "dry_run": dry_run,
+                    "workflow_status": result.get("workflow_status")
+                }
+            )
+
+            return result
 
 
-# GitHub Projects V2 tools (v0.3.4)
-@mcp.tool()
-@github_operation("list projects", require_projects=True)
-def github_list_projects(owner: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
-    """
-    List GitHub Projects V2 for a user or organization.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "list projects" or "show projects"
-    - User wants to see all available projects
-    - Before working with a specific project
-    - User asks "what projects do I have?"
-    - Exploring project management capabilities
-    
-    This tool lists all GitHub Projects V2 for the specified owner,
-    showing project titles, descriptions, item counts, and IDs.
-    
-    Args:
-        owner: Username or organization (defaults to current repo owner)
-        limit: Maximum number of projects to return (default: 20, max: 100)
-        
-    Returns:
-        List of projects with details
-    """
-    github_client, _, _, _, projects_manager = get_github_instances()
-    
-    # Use current repo owner if not specified
-    if not owner:
-        current_repo = github_client.get_current_repository()
-        if current_repo:
-            owner = current_repo.owner.login
-        else:
-            # Try to get authenticated user
+        # GitHub Projects V2 tools (v0.3.4)
+        @mcp.tool()
+        @github_operation("list projects", require_projects=True)
+        def github_list_projects(owner: Optional[str] = None, limit: int = 20) -> Dict[str, Any]:
+            """
+            List GitHub Projects V2 for a user or organization.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "list projects" or "show projects"
+            - User wants to see all available projects
+            - Before working with a specific project
+            - User asks "what projects do I have?"
+            - Exploring project management capabilities
+
+            This tool lists all GitHub Projects V2 for the specified owner,
+            showing project titles, descriptions, item counts, and IDs.
+
+            Args:
+                owner: Username or organization (defaults to current repo owner)
+                limit: Maximum number of projects to return (default: 20, max: 100)
+
+            Returns:
+                List of projects with details
+            """
+            github_client, _, _, _, projects_manager = get_github_instances()
+
+            # Use current repo owner if not specified
+            if not owner:
+                current_repo = github_client.get_current_repository()
+                if current_repo:
+                    owner = current_repo.owner.login
+                else:
+                    # Try to get authenticated user
+                    try:
+                        user = github_client._github.get_user()
+                        owner = user.login
+                    except:
+                        return {
+                            "error": "No owner specified",
+                            "message": "Specify an owner or switch to a repository"
+                        }
+
+            # List projects
+            projects = run_async_in_thread(
+                projects_manager.list_projects(owner, limit)
+            )
+
+            console_logger.info(f"Listed {len(projects)} projects for {owner}")
+
+            return {
+                "success": True,
+                "owner": owner,
+                "count": len(projects),
+                "projects": projects
+            }
+
+
+        @mcp.tool()
+        @github_operation("create project", require_projects=True)
+        def github_create_project(title: str, body: Optional[str] = None, owner: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Create a new GitHub Project V2.
+
+            Args:
+                title: Project title
+                body: Optional project description (Note: GitHub API currently doesn't support descriptions at creation)
+                owner: Repository owner (defaults to current repo owner)
+
+            Returns:
+                Project information including ID and URL
+
+            Note:
+                The body parameter is accepted but not used due to GitHub API limitations.
+                Consider adding a custom field after creation if descriptions are needed.
+            """
+            github_client, _, _, _, projects_manager = get_github_instances()
+
+            # Use current repo owner if not specified
+            if not owner:
+                current_repo = github_client.get_current_repository()
+                if not current_repo:
+                    return {
+                        "error": "No repository context set",
+                        "message": "Use github_switch_repository first or specify owner"
+                    }
+                owner = current_repo.owner.login
+
+            # Create project (async function needs to be run in event loop)
+            project = run_async_in_thread(
+                projects_manager.create_project(owner, title, body)
+            )
+
+            console_logger.info(f"Created GitHub project '{title}' for {owner}")
+
+            response = {
+                "success": True,
+                "project": {
+                    "id": project["id"],
+                    "number": project["number"],
+                    "title": project["title"],
+                    "description": None,  # GitHub Projects V2 doesn't support descriptions at creation
+                    "url": project["url"],
+                    "owner": owner,
+                    "created_at": project["createdAt"]
+                }
+            }
+
+            # Add note if description was requested
+            if body:
+                response["note"] = "GitHub Projects V2 API doesn't support descriptions at creation time. Consider adding a custom field after creation."
+
+            return response
+
+
+        @mcp.tool()
+        @github_operation("get project", require_projects=True)
+        def github_get_project(number: int, owner: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Get GitHub Project V2 details.
+
+            Args:
+                number: Project number
+                owner: Repository owner (defaults to current repo owner)
+
+            Returns:
+                Project details including fields and item counts
+            """
+            github_client, _, _, _, projects_manager = get_github_instances()
+
+            # Use current repo owner if not specified
+            if not owner:
+                current_repo = github_client.get_current_repository()
+                if not current_repo:
+                    return {
+                        "error": "No repository context set",
+                        "message": "Use github_switch_repository first or specify owner"
+                    }
+                owner = current_repo.owner.login
+
+            # Get project details
+            project = run_async_in_thread(
+                projects_manager.get_project(owner, number)
+            )
+
+            console_logger.info(f"Retrieved project #{number} for {owner}")
+
+            return {
+                "success": True,
+                "project": {
+                    "id": project["id"],
+                    "number": project["number"],
+                    "title": project["title"],
+                    "description": project.get("shortDescription", ""),
+                    "url": project["url"],
+                    "item_count": project["items"]["totalCount"],
+                    "fields": [
+                        {
+                            "id": field["id"],
+                            "name": field["name"],
+                            "type": field["dataType"],
+                            "options": field.get("options", [])
+                        }
+                        for field in project["fields"]["nodes"]
+                    ],
+                    "created_at": project["createdAt"],
+                    "updated_at": project["updatedAt"]
+                }
+            }
+
+
+        @mcp.tool()
+        @github_operation("add project item", require_projects=True, require_repo=True)
+        def github_add_project_item(project_id: str, issue_number: int) -> Dict[str, Any]:
+            """
+            Add an issue or PR to a GitHub Project V2.
+
+            Args:
+                project_id: Project node ID
+                issue_number: Issue or PR number from current repository
+
+            Returns:
+                Added item information
+            """
+            github_client, _, _, _, projects_manager = get_github_instances()
+
+            current_repo = github_client.get_current_repository()
+
+            # Get the issue/PR to add
             try:
-                user = github_client._github.get_user()
-                owner = user.login
-            except:
+                issue = current_repo.get_issue(issue_number)
+                content_id = issue.node_id
+            except Exception:
+                try:
+                    pr = current_repo.get_pull(issue_number)
+                    content_id = pr.node_id
+                except Exception:
+                    return {
+                        "error": f"Issue/PR #{issue_number} not found",
+                        "message": "Check the issue/PR number"
+                    }
+
+            # Add to project
+            item = run_async_in_thread(
+                projects_manager.add_item_to_project(project_id, content_id)
+            )
+
+            console_logger.info(f"Added {item['content']['title']} to project")
+
+            return {
+                "success": True,
+                "item": {
+                    "id": item["id"],
+                    "type": item["type"],
+                    "content": {
+                        "id": item["content"]["id"],
+                        "number": item["content"]["number"],
+                        "title": item["content"]["title"],
+                        "url": item["content"]["url"]
+                    },
+                    "created_at": item["createdAt"]
+                }
+            }
+
+
+        @mcp.tool()
+        @github_operation("update project item", require_projects=True)
+        def github_update_project_item(project_id: str, item_id: str, field_id: str, value: str) -> Dict[str, Any]:
+            """
+            Update a field value for a project item.
+
+            Args:
+                project_id: Project node ID
+                item_id: Item node ID
+                field_id: Field node ID
+                value: New field value
+
+            Returns:
+                Update confirmation
+            """
+            _, _, _, _, projects_manager = get_github_instances()
+
+            # Update the field
+            result = run_async_in_thread(
+                projects_manager.update_item_field(project_id, item_id, field_id, value)
+            )
+
+            console_logger.info(f"Updated project item field {field_id} to '{value}'")
+
+            return {
+                "success": True,
+                "item_id": result["id"],
+                "field_id": field_id,
+                "value": value
+            }
+
+
+        @mcp.tool()
+        @github_operation("create project field", require_projects=True)
+        def github_create_project_field(project_id: str, name: str, data_type: str,
+                                       options: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
+            """
+            Create a custom field in a GitHub Project V2.
+
+            Args:
+                project_id: Project node ID
+                name: Field name
+                data_type: Field type (TEXT, NUMBER, DATE, SINGLE_SELECT)
+                options: For SINGLE_SELECT, list of {name, color} options
+
+            Returns:
+                Created field information
+            """
+            _, _, _, _, projects_manager = get_github_instances()
+
+            # Create the field
+            field = run_async_in_thread(
+                projects_manager.create_field(project_id, name, data_type, options)
+            )
+
+            console_logger.info(f"Created project field '{name}' with type {data_type}")
+
+            return {
+                "success": True,
+                "field": {
+                    "id": field["id"],
+                    "name": field["name"],
+                    "type": field["dataType"],
+                    "options": field.get("options", [])
+                }
+            }
+
+
+        @mcp.tool()
+        @github_operation("create project from template", require_projects=True)
+        def github_create_project_from_template(title: str, template: str, body: Optional[str] = None,
+                                                owner: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Create a GitHub Project V2 from a predefined template.
+
+            Args:
+                title: Project title
+                template: Template name ('roadmap', 'bugs', 'features')
+                body: Optional project description
+                owner: Repository owner (defaults to current repo owner)
+
+            Returns:
+                Created project with configured fields
+            """
+            github_client, _, _, _, projects_manager = get_github_instances()
+
+            # Use current repo owner if not specified
+            if not owner:
+                current_repo = github_client.get_current_repository()
+                if not current_repo:
+                    return {
+                        "error": "No repository context set",
+                        "message": "Use github_switch_repository first or specify owner"
+                    }
+                owner = current_repo.owner.login
+
+            # Create project from template
+            project = run_async_in_thread(
+                projects_manager.create_project_from_template(owner, title, template, body)
+            )
+
+            console_logger.info(f"Created project '{title}' from template '{template}'")
+
+            return {
+                "success": True,
+                "project": {
+                    "id": project["id"],
+                    "number": project["number"],
+                    "title": project["title"],
+                    "description": project.get("shortDescription", ""),
+                    "url": project["url"],
+                    "owner": owner,
+                    "template": template,
+                    "fields": [
+                        {
+                            "id": field["id"],
+                            "name": field["name"],
+                            "type": field["dataType"],
+                            "options": field.get("options", [])
+                        }
+                        for field in project.get("fields", [])
+                    ]
+                }
+            }
+
+
+        @mcp.tool()
+        @github_operation("get project status", require_projects=True)
+        def github_get_project_status(project_id: str) -> Dict[str, Any]:
+            """
+            Get project status overview with item counts and progress.
+
+            Args:
+                project_id: Project node ID
+
+            Returns:
+                Project status dashboard with metrics
+            """
+            _, _, _, _, projects_manager = get_github_instances()
+
+            # Get detailed project status via GraphQL
+            # Enhanced query for project status
+            status_query = """
+            query($projectId: ID!) {
+                node(id: $projectId) {
+                    ... on ProjectV2 {
+                        id
+                        number
+                        title
+                        shortDescription
+                        url
+                        items(first: 100) {
+                            totalCount
+                            nodes {
+                                type
+                                content {
+                                    ... on Issue {
+                                        state
+                                        closed
+                                    }
+                                    ... on PullRequest {
+                                        state
+                                        merged
+                                        closed
+                                    }
+                                }
+                            }
+                        }
+                        fields(first: 20) {
+                            nodes {
+                                ... on ProjectV2Field {
+                                    id
+                                    name
+                                    dataType
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            """
+
+            # Handle async execution
+            data = run_async_in_thread(
+                projects_manager._execute_query(status_query, {"projectId": project_id})
+            )
+
+            project = data["node"]
+            if not project:
+                return {"error": "Project not found"}
+
+            # Calculate statistics
+            items = project["items"]["nodes"]
+            total_items = project["items"]["totalCount"]
+
+            issue_stats = {"open": 0, "closed": 0}
+            pr_stats = {"open": 0, "closed": 0, "merged": 0}
+
+            for item in items:
+                if item["type"] == "ISSUE":
+                    if item["content"]["closed"]:
+                        issue_stats["closed"] += 1
+                    else:
+                        issue_stats["open"] += 1
+                elif item["type"] == "PULL_REQUEST":
+                    if item["content"]["merged"]:
+                        pr_stats["merged"] += 1
+                    elif item["content"]["closed"]:
+                        pr_stats["closed"] += 1
+                    else:
+                        pr_stats["open"] += 1
+
+            console_logger.info(f"Retrieved status for project #{project['number']}")
+
+            return {
+                "success": True,
+                "project": {
+                    "id": project["id"],
+                    "number": project["number"],
+                    "title": project["title"],
+                    "description": project.get("shortDescription", ""),
+                    "url": project["url"]
+                },
+                "statistics": {
+                    "total_items": total_items,
+                    "issues": issue_stats,
+                    "pull_requests": pr_stats,
+                    "completion_rate": round(
+                        (issue_stats["closed"] + pr_stats["merged"]) / max(total_items, 1) * 100, 1
+                    ) if total_items > 0 else 0
+                },
+                "fields": [
+                    {
+                        "id": field["id"],
+                        "name": field["name"],
+                        "type": field["dataType"]
+                    }
+                    for field in project["fields"]["nodes"]
+                    if field and "id" in field  # Skip empty field objects
+                ]
+            }
+
+
+        @mcp.tool()
+        @github_operation("delete project", require_projects=True)
+        def github_delete_project(project_id: str) -> Dict[str, Any]:
+            """
+            Delete a GitHub Project V2.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "delete project" with a project ID
+            - User wants to remove an entire project
+            - Cleaning up test or temporary projects
+            - Project is no longer needed
+
+            This tool permanently deletes a GitHub Project V2. This action cannot be undone.
+            Requires the project node ID (starts with PVT_).
+
+            Args:
+                project_id: Project node ID (must start with PVT_)
+
+            Returns:
+                Deletion status with project details
+            """
+            _, _, _, _, projects_manager = get_github_instances()
+
+            # Validate project ID format
+            if not project_id.startswith("PVT_"):
                 return {
-                    "error": "No owner specified",
-                    "message": "Specify an owner or switch to a repository"
+                    "error": "Projects manager not available",
+                    "message": "Failed to initialize GitHub Projects manager"
                 }
-    
-    # List projects
-    projects = run_async_in_thread(
-        projects_manager.list_projects(owner, limit)
-    )
-    
-    console_logger.info(f"Listed {len(projects)} projects for {owner}")
-    
-    return {
-        "success": True,
-        "owner": owner,
-        "count": len(projects),
-        "projects": projects
-    }
 
+            # Delete the project
+            result = run_async_in_thread(
+                projects_manager.delete_project(project_id)
+            )
 
-@mcp.tool()
-@github_operation("create project", require_projects=True)
-def github_create_project(title: str, body: Optional[str] = None, owner: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Create a new GitHub Project V2.
-    
-    Args:
-        title: Project title
-        body: Optional project description (Note: GitHub API currently doesn't support descriptions at creation)
-        owner: Repository owner (defaults to current repo owner)
-        
-    Returns:
-        Project information including ID and URL
-        
-    Note:
-        The body parameter is accepted but not used due to GitHub API limitations.
-        Consider adding a custom field after creation if descriptions are needed.
-    """
-    github_client, _, _, _, projects_manager = get_github_instances()
-    
-    # Use current repo owner if not specified
-    if not owner:
-        current_repo = github_client.get_current_repository()
-        if not current_repo:
+            console_logger.info(f"Deleted project {project_id}")
+
             return {
-                "error": "No repository context set", 
-                "message": "Use github_switch_repository first or specify owner"
+                "success": True,
+                "deleted": result.get("deleted", True),
+                "project_id": result.get("project_id"),
+                "title": result.get("title", "Unknown"),
+                "message": result.get("message", "Project deleted successfully")
             }
-        owner = current_repo.owner.login
-    
-    # Create project (async function needs to be run in event loop)
-    project = run_async_in_thread(
-        projects_manager.create_project(owner, title, body)
-    )
-    
-    console_logger.info(f"Created GitHub project '{title}' for {owner}")
-    
-    response = {
-        "success": True,
-        "project": {
-            "id": project["id"],
-            "number": project["number"],
-            "title": project["title"],
-            "description": None,  # GitHub Projects V2 doesn't support descriptions at creation
-            "url": project["url"],
-            "owner": owner,
-            "created_at": project["createdAt"]
-        }
-    }
-    
-    # Add note if description was requested
-    if body:
-        response["note"] = "GitHub Projects V2 API doesn't support descriptions at creation time. Consider adding a custom field after creation."
-        
-    return response
 
 
-@mcp.tool()
-@github_operation("get project", require_projects=True)
-def github_get_project(number: int, owner: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Get GitHub Project V2 details.
-    
-    Args:
-        number: Project number
-        owner: Repository owner (defaults to current repo owner)
-        
-    Returns:
-        Project details including fields and item counts
-    """
-    github_client, _, _, _, projects_manager = get_github_instances()
-    
-    # Use current repo owner if not specified
-    if not owner:
-        current_repo = github_client.get_current_repository()
-        if not current_repo:
+        @mcp.tool()
+        @github_operation("smart add project item", require_projects=True, require_repo=True)
+        def github_smart_add_project_item(project_id: str, issue_number: int) -> Dict[str, Any]:
+            """
+            Add an issue to a project with intelligent field assignment.
+
+            This tool analyzes the issue content and automatically assigns appropriate
+            field values based on the issue title, body, and labels.
+
+            Args:
+                project_id: Project node ID
+                issue_number: Issue number from current repository
+
+            Returns:
+                Item details with applied field assignments
+            """
+            github_client, _, _, _, projects_manager = get_github_instances()
+
+            current_repo = github_client.get_current_repository()
+
+            # Execute smart add with async handling
+            result = run_async_in_thread(
+                projects_manager.smart_add_issue_to_project(
+                    project_id, issue_number, current_repo
+                )
+            )
+
+            console_logger.info(f"Smart added issue #{issue_number} to project with {len(result['applied_fields'])} fields set")
+
             return {
-                "error": "No repository context set",
-                "message": "Use github_switch_repository first or specify owner"
+                "success": True,
+                "item": {
+                    "id": result["item"]["id"],
+                    "type": result["item"]["type"],
+                    "issue_number": issue_number,
+                    "created_at": result["item"]["createdAt"]
+                },
+                "applied_fields": result["applied_fields"],
+                "all_suggestions": result["suggestions"],
+                "message": f"Added issue #{issue_number} with {len(result['applied_fields'])} fields automatically set"
             }
-        owner = current_repo.owner.login
-    
-    # Get project details
-    project = run_async_in_thread(
-        projects_manager.get_project(owner, number)
-    )
-    
-    console_logger.info(f"Retrieved project #{number} for {owner}")
-    
-    return {
-        "success": True,
-        "project": {
-            "id": project["id"],
-            "number": project["number"],
-            "title": project["title"],
-            "description": project.get("shortDescription", ""),
-            "url": project["url"],
-            "item_count": project["items"]["totalCount"],
-            "fields": [
-                {
-                    "id": field["id"],
-                    "name": field["name"],
-                    "type": field["dataType"],
-                    "options": field.get("options", [])
-                }
-                for field in project["fields"]["nodes"]
-            ],
-            "created_at": project["createdAt"],
-            "updated_at": project["updatedAt"]
-        }
-    }
 
 
-@mcp.tool()
-@github_operation("add project item", require_projects=True, require_repo=True)
-def github_add_project_item(project_id: str, issue_number: int) -> Dict[str, Any]:
-    """
-    Add an issue or PR to a GitHub Project V2.
-    
-    Args:
-        project_id: Project node ID
-        issue_number: Issue or PR number from current repository
-        
-    Returns:
-        Added item information
-    """
-    github_client, _, _, _, projects_manager = get_github_instances()
-    
-    current_repo = github_client.get_current_repository()
-    
-    # Get the issue/PR to add
-    try:
-        issue = current_repo.get_issue(issue_number)
-        content_id = issue.node_id
-    except Exception:
-        try:
-            pr = current_repo.get_pull(issue_number)
-            content_id = pr.node_id
-        except Exception:
+        # GitHub Sub-Issues tools
+        @mcp.tool()
+        @github_operation("list sub-issues", require_repo=True)
+        def github_list_sub_issues(parent_issue_number: int) -> Dict[str, Any]:
+            """
+            List all sub-issues for a parent issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "list sub-issues for issue #X"
+            - User asks "what are the sub-tasks for issue #X?"
+            - Need to see the breakdown of a complex issue
+            - Checking progress on a parent issue
+            - Before adding or removing sub-issues
+
+            This tool retrieves all sub-issues linked to a parent issue,
+            showing their status, title, and relationship.
+
+            Args:
+                parent_issue_number: The parent issue number
+
+            Returns:
+                List of sub-issue information with status and titles
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Get sub-issues
+            sub_issues = github_client.list_sub_issues(parent_issue_number)
+
             return {
-                "error": f"Issue/PR #{issue_number} not found",
-                "message": "Check the issue/PR number"
+                "parent_issue": parent_issue_number,
+                "sub_issues_count": len(sub_issues),
+                "sub_issues": sub_issues,
+                "message": f"Found {len(sub_issues)} sub-issues for issue #{parent_issue_number}"
             }
-    
-    # Add to project
-    item = run_async_in_thread(
-        projects_manager.add_item_to_project(project_id, content_id)
-    )
-    
-    console_logger.info(f"Added {item['content']['title']} to project")
-    
-    return {
-        "success": True,
-        "item": {
-            "id": item["id"],
-            "type": item["type"],
-            "content": {
-                "id": item["content"]["id"],
-                "number": item["content"]["number"],
-                "title": item["content"]["title"],
-                "url": item["content"]["url"]
-            },
-            "created_at": item["createdAt"]
-        }
-    }
 
 
-@mcp.tool()
-@github_operation("update project item", require_projects=True)
-def github_update_project_item(project_id: str, item_id: str, field_id: str, value: str) -> Dict[str, Any]:
-    """
-    Update a field value for a project item.
-    
-    Args:
-        project_id: Project node ID
-        item_id: Item node ID
-        field_id: Field node ID
-        value: New field value
-        
-    Returns:
-        Update confirmation
-    """
-    _, _, _, _, projects_manager = get_github_instances()
-    
-    # Update the field
-    result = run_async_in_thread(
-        projects_manager.update_item_field(project_id, item_id, field_id, value)
-    )
-    
-    console_logger.info(f"Updated project item field {field_id} to '{value}'")
-    
-    return {
-        "success": True,
-        "item_id": result["id"],
-        "field_id": field_id,
-        "value": value
-    }
+        @mcp.tool()
+        @github_operation("add sub-issue", require_repo=True)
+        def github_add_sub_issue(parent_issue_number: int, sub_issue_number: int, replace_parent: bool = False) -> Dict[str, Any]:
+            """
+            Add a sub-issue relationship to a parent issue.
 
+            WHEN TO USE THIS TOOL:
+            - User asks to "add issue #Y as sub-issue of #X"
+            - User asks to "link issue #Y to parent #X"
+            - Breaking down complex issues into sub-tasks
+            - Creating hierarchical issue relationships
+            - Re-parenting an issue (with replace_parent=True)
 
-@mcp.tool()
-@github_operation("create project field", require_projects=True)
-def github_create_project_field(project_id: str, name: str, data_type: str, 
-                               options: Optional[List[Dict[str, str]]] = None) -> Dict[str, Any]:
-    """
-    Create a custom field in a GitHub Project V2.
-    
-    Args:
-        project_id: Project node ID
-        name: Field name
-        data_type: Field type (TEXT, NUMBER, DATE, SINGLE_SELECT)
-        options: For SINGLE_SELECT, list of {name, color} options
-        
-    Returns:
-        Created field information
-    """
-    _, _, _, _, projects_manager = get_github_instances()
-    
-    # Create the field
-    field = run_async_in_thread(
-        projects_manager.create_field(project_id, name, data_type, options)
-    )
-    
-    console_logger.info(f"Created project field '{name}' with type {data_type}")
-    
-    return {
-        "success": True,
-        "field": {
-            "id": field["id"],
-            "name": field["name"],
-            "type": field["dataType"],
-            "options": field.get("options", [])
-        }
-    }
+            This tool creates a parent-child relationship between two existing issues.
+            Use replace_parent=True if the sub-issue already has a different parent.
 
+            Args:
+                parent_issue_number: The parent issue number
+                sub_issue_number: The issue number to add as a sub-issue
+                replace_parent: Whether to replace the current parent (re-parenting)
 
-@mcp.tool()
-@github_operation("create project from template", require_projects=True)
-def github_create_project_from_template(title: str, template: str, body: Optional[str] = None, 
-                                        owner: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Create a GitHub Project V2 from a predefined template.
-    
-    Args:
-        title: Project title
-        template: Template name ('roadmap', 'bugs', 'features')
-        body: Optional project description
-        owner: Repository owner (defaults to current repo owner)
-        
-    Returns:
-        Created project with configured fields
-    """
-    github_client, _, _, _, projects_manager = get_github_instances()
-    
-    # Use current repo owner if not specified
-    if not owner:
-        current_repo = github_client.get_current_repository()
-        if not current_repo:
+            Returns:
+                Operation result with relationship details
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Note: GitHub sub-issues API uses issue numbers, not IDs
+            # The client method expects sub_issue_id but we're passing issue number
+            # This works because the API accepts issue numbers in the current repository
+            github_client.add_sub_issue(parent_issue_number, sub_issue_number, replace_parent)
+
+            console_logger.info(f"Added issue #{sub_issue_number} as sub-issue of #{parent_issue_number}")
+
             return {
-                "error": "No repository context set",
-                "message": "Use github_switch_repository first or specify owner"
+                "success": True,
+                "parent_issue": parent_issue_number,
+                "sub_issue": sub_issue_number,
+                "replaced_parent": replace_parent,
+                "message": f"Successfully added issue #{sub_issue_number} as sub-issue of #{parent_issue_number}"
             }
-        owner = current_repo.owner.login
-    
-    # Create project from template
-    project = run_async_in_thread(
-        projects_manager.create_project_from_template(owner, title, template, body)
-    )
-    
-    console_logger.info(f"Created project '{title}' from template '{template}'")
-    
-    return {
-        "success": True,
-        "project": {
-            "id": project["id"],
-            "number": project["number"],
-            "title": project["title"],
-            "description": project.get("shortDescription", ""),
-            "url": project["url"],
-            "owner": owner,
-            "template": template,
-            "fields": [
-                {
-                    "id": field["id"],
-                    "name": field["name"],
-                    "type": field["dataType"],
-                    "options": field.get("options", [])
-                }
-                for field in project.get("fields", [])
-            ]
-        }
-    }
 
 
-@mcp.tool()
-@github_operation("get project status", require_projects=True)
-def github_get_project_status(project_id: str) -> Dict[str, Any]:
-    """
-    Get project status overview with item counts and progress.
-    
-    Args:
-        project_id: Project node ID
-        
-    Returns:
-        Project status dashboard with metrics
-    """
-    _, _, _, _, projects_manager = get_github_instances()
-    
-    # Get detailed project status via GraphQL
-    # Enhanced query for project status
-    status_query = """
-    query($projectId: ID!) {
-        node(id: $projectId) {
-            ... on ProjectV2 {
-                id
-                number
-                title
-                shortDescription
-                url
-                items(first: 100) {
-                    totalCount
-                    nodes {
-                        type
-                        content {
-                            ... on Issue {
-                                state
-                                closed
-                            }
-                            ... on PullRequest {
-                                state
-                                merged
-                                closed
-                            }
-                        }
-                    }
-                }
-                fields(first: 20) {
-                    nodes {
-                        ... on ProjectV2Field {
-                            id
-                            name
-                            dataType
-                        }
-                    }
-                }
+        @mcp.tool()
+        @github_operation("remove sub-issue", require_repo=True)
+        def github_remove_sub_issue(parent_issue_number: int, sub_issue_number: int) -> Dict[str, Any]:
+            """
+            Remove a sub-issue relationship from a parent issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "remove sub-issue #Y from #X"
+            - User asks to "unlink issue #Y from parent #X"
+            - Reorganizing issue hierarchy
+            - Making a sub-issue independent
+            - Correcting mistaken relationships
+
+            This tool removes the parent-child relationship between two issues.
+            The sub-issue becomes independent but is not deleted.
+
+            Args:
+                parent_issue_number: The parent issue number
+                sub_issue_number: The sub-issue number to remove
+
+            Returns:
+                Operation result confirming removal
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Remove sub-issue (API accepts issue number for current repo)
+            github_client.remove_sub_issue(parent_issue_number, sub_issue_number)
+
+            console_logger.info(f"Removed issue #{sub_issue_number} from parent #{parent_issue_number}")
+
+            return {
+                "success": True,
+                "parent_issue": parent_issue_number,
+                "removed_sub_issue": sub_issue_number,
+                "message": f"Successfully removed issue #{sub_issue_number} from parent #{parent_issue_number}"
             }
-        }
-    }
-    """
-    
-    # Handle async execution
-    data = run_async_in_thread(
-        projects_manager._execute_query(status_query, {"projectId": project_id})
-    )
-    
-    project = data["node"]
-    if not project:
-        return {"error": "Project not found"}
-    
-    # Calculate statistics
-    items = project["items"]["nodes"]
-    total_items = project["items"]["totalCount"]
-    
-    issue_stats = {"open": 0, "closed": 0}
-    pr_stats = {"open": 0, "closed": 0, "merged": 0}
-    
-    for item in items:
-        if item["type"] == "ISSUE":
-            if item["content"]["closed"]:
-                issue_stats["closed"] += 1
-            else:
-                issue_stats["open"] += 1
-        elif item["type"] == "PULL_REQUEST":
-            if item["content"]["merged"]:
-                pr_stats["merged"] += 1
-            elif item["content"]["closed"]:
-                pr_stats["closed"] += 1
-            else:
-                pr_stats["open"] += 1
-    
-    console_logger.info(f"Retrieved status for project #{project['number']}")
-    
-    return {
-        "success": True,
-        "project": {
-            "id": project["id"],
-            "number": project["number"],
-            "title": project["title"],
-            "description": project.get("shortDescription", ""),
-            "url": project["url"]
-        },
-        "statistics": {
-            "total_items": total_items,
-            "issues": issue_stats,
-            "pull_requests": pr_stats,
-            "completion_rate": round(
-                (issue_stats["closed"] + pr_stats["merged"]) / max(total_items, 1) * 100, 1
-            ) if total_items > 0 else 0
-        },
-        "fields": [
-            {
-                "id": field["id"],
-                "name": field["name"],
-                "type": field["dataType"]
+
+
+        @mcp.tool()
+        @github_operation("create sub-issue", require_repo=True)
+        def github_create_sub_issue(parent_issue_number: int, title: str, body: str = "", labels: Optional[List[str]] = None) -> Dict[str, Any]:
+            """
+            Create a new issue and immediately add it as a sub-issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "create a sub-task for issue #X"
+            - User asks to "add a new sub-issue to #X with title..."
+            - Breaking down work while creating new issues
+            - Creating subtasks from a checklist
+            - Planning implementation details
+
+            This tool combines issue creation with sub-issue linking in one operation.
+            The new issue inherits context from the parent.
+
+            Args:
+                parent_issue_number: The parent issue number
+                title: Title for the new sub-issue
+                body: Description/body for the new sub-issue
+                labels: Optional labels to apply (inherits parent labels if not specified)
+
+            Returns:
+                Created sub-issue information with relationship details
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Get parent issue for context
+            parent_issue = github_client.get_issue(parent_issue_number)
+
+            # Inherit labels from parent if not specified
+            if labels is None:
+                labels = parent_issue.get("labels", [])
+
+            # Add reference to parent in body
+            enhanced_body = f"{body}\n\n---\nSub-issue of #{parent_issue_number}" if body else f"Sub-issue of #{parent_issue_number}"
+
+            # Create the issue
+            new_issue = github_client.create_issue(
+                title=title,
+                body=enhanced_body,
+                labels=labels
+            )
+
+            # Add as sub-issue
+            github_client.add_sub_issue(parent_issue_number, new_issue["number"], replace_parent=False)
+
+            console_logger.info(f"Created issue #{new_issue['number']} as sub-issue of #{parent_issue_number}")
+
+            return {
+                "success": True,
+                "parent_issue": parent_issue_number,
+                "sub_issue": {
+                    "number": new_issue["number"],
+                    "title": new_issue["title"],
+                    "url": new_issue["url"],
+                    "state": new_issue["state"],
+                    "labels": new_issue["labels"]
+                },
+                "message": f"Created issue #{new_issue['number']} as sub-issue of #{parent_issue_number}"
             }
-            for field in project["fields"]["nodes"]
-            if field and "id" in field  # Skip empty field objects
-        ]
-    }
 
 
-@mcp.tool()
-@github_operation("delete project", require_projects=True)
-def github_delete_project(project_id: str) -> Dict[str, Any]:
-    """
-    Delete a GitHub Project V2.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "delete project" with a project ID
-    - User wants to remove an entire project
-    - Cleaning up test or temporary projects
-    - Project is no longer needed
-    
-    This tool permanently deletes a GitHub Project V2. This action cannot be undone.
-    Requires the project node ID (starts with PVT_).
-    
-    Args:
-        project_id: Project node ID (must start with PVT_)
-        
-    Returns:
-        Deletion status with project details
-    """
-    _, _, _, _, projects_manager = get_github_instances()
-    
-    # Validate project ID format
-    if not project_id.startswith("PVT_"):
-        return {
-            "error": "Projects manager not available",
-            "message": "Failed to initialize GitHub Projects manager"
-        }
-    
-    # Delete the project
-    result = run_async_in_thread(
-        projects_manager.delete_project(project_id)
-    )
-    
-    console_logger.info(f"Deleted project {project_id}")
-    
-    return {
-        "success": True,
-        "deleted": result.get("deleted", True),
-        "project_id": result.get("project_id"),
-        "title": result.get("title", "Unknown"),
-        "message": result.get("message", "Project deleted successfully")
-    }
+        @mcp.tool()
+        @github_operation("reorder sub-issues", require_repo=True)
+        def github_reorder_sub_issues(parent_issue_number: int, sub_issue_numbers: List[int]) -> Dict[str, Any]:
+            """
+            Reorder sub-issues within a parent issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "reorder sub-issues for #X"
+            - User provides a specific order like "put #3 before #2"
+            - Prioritizing sub-tasks
+            - Organizing workflow sequence
+            - Adjusting implementation order
+
+            This tool sets the display order of sub-issues under a parent.
+            Provide all sub-issue numbers in the desired order.
+
+            Args:
+                parent_issue_number: The parent issue number
+                sub_issue_numbers: Ordered list of sub-issue numbers
+
+            Returns:
+                Operation result with new ordering
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Note: The API accepts issue numbers for current repository
+            # Even though the parameter is named sub_issue_ids, it works with issue numbers
+            github_client.reorder_sub_issues(parent_issue_number, sub_issue_numbers)
+
+            console_logger.info(f"Reordered {len(sub_issue_numbers)} sub-issues for issue #{parent_issue_number}")
+
+            return {
+                "success": True,
+                "parent_issue": parent_issue_number,
+                "new_order": sub_issue_numbers,
+                "message": f"Successfully reordered {len(sub_issue_numbers)} sub-issues"
+            }
 
 
-@mcp.tool()
-@github_operation("smart add project item", require_projects=True, require_repo=True)
-def github_smart_add_project_item(project_id: str, issue_number: int) -> Dict[str, Any]:
-    """
-    Add an issue to a project with intelligent field assignment.
-    
-    This tool analyzes the issue content and automatically assigns appropriate
-    field values based on the issue title, body, and labels.
-    
-    Args:
-        project_id: Project node ID
-        issue_number: Issue number from current repository
-        
-    Returns:
-        Item details with applied field assignments
-    """
-    github_client, _, _, _, projects_manager = get_github_instances()
-    
-    current_repo = github_client.get_current_repository()
-    
-    # Execute smart add with async handling
-    result = run_async_in_thread(
-        projects_manager.smart_add_issue_to_project(
-            project_id, issue_number, current_repo
-        )
-    )
-    
-    console_logger.info(f"Smart added issue #{issue_number} to project with {len(result['applied_fields'])} fields set")
-    
-    return {
-        "success": True,
-        "item": {
-            "id": result["item"]["id"],
-            "type": result["item"]["type"],
-            "issue_number": issue_number,
-            "created_at": result["item"]["createdAt"]
-        },
-        "applied_fields": result["applied_fields"],
-        "all_suggestions": result["suggestions"],
-        "message": f"Added issue #{issue_number} with {len(result['applied_fields'])} fields automatically set"
-    }
+        @mcp.tool()
+        @github_operation("add sub-issues to project", require_repo=True, require_projects=True)
+        def github_add_sub_issues_to_project(project_id: str, parent_issue_number: int) -> Dict[str, Any]:
+            """
+            Add all sub-issues of a parent issue to a GitHub Project V2.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "add all sub-issues of #X to project"
+            - User asks to "track sub-tasks in project board"
+            - Managing hierarchical issues in project view
+            - After creating sub-issues for better visualization
+            - Bulk project organization
+
+            This tool automatically adds all sub-issues with smart field assignment,
+            inheriting relevant values from the parent issue where appropriate.
+
+            Args:
+                project_id: Project node ID (starts with PVT_)
+                parent_issue_number: Parent issue number with sub-issues
+
+            Returns:
+                Operation result with added sub-issues and field assignments
+            """
+            github_client, _, _, _, projects_manager = get_github_instances()
+
+            current_repo = github_client.get_current_repository()
+
+            # Execute smart add sub-issues with async handling
+            result = run_async_in_thread(
+                projects_manager.smart_add_sub_issues_to_project(
+                    project_id, parent_issue_number, current_repo, github_client
+                )
+            )
+
+            console_logger.info(
+                f"Added {result['added_count']} sub-issues from parent #{parent_issue_number} to project"
+            )
+
+            return {
+                "success": True,
+                "parent_issue": parent_issue_number,
+                "project_id": project_id,
+                "added_count": result["added_count"],
+                "failed_count": result["failed_count"],
+                "sub_issues": result["sub_issues"],
+                "failed_sub_issues": result.get("failed_sub_issues", []),
+                "message": result["message"]
+            }
 
 
-# GitHub Sub-Issues tools
-@mcp.tool()
-@github_operation("list sub-issues", require_repo=True)
-def github_list_sub_issues(parent_issue_number: int) -> Dict[str, Any]:
-    """
-    List all sub-issues for a parent issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "list sub-issues for issue #X"
-    - User asks "what are the sub-tasks for issue #X?"
-    - Need to see the breakdown of a complex issue
-    - Checking progress on a parent issue
-    - Before adding or removing sub-issues
-    
-    This tool retrieves all sub-issues linked to a parent issue,
-    showing their status, title, and relationship.
-    
-    Args:
-        parent_issue_number: The parent issue number
-        
-    Returns:
-        List of sub-issue information with status and titles
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Get sub-issues
-    sub_issues = github_client.list_sub_issues(parent_issue_number)
-    
-    return {
-        "parent_issue": parent_issue_number,
-        "sub_issues_count": len(sub_issues),
-        "sub_issues": sub_issues,
-        "message": f"Found {len(sub_issues)} sub-issues for issue #{parent_issue_number}"
-    }
+        # Enhanced GitHub Issue Management Tools (v0.3.4.post5)
+
+        @mcp.tool()
+        @github_operation("close issue", require_repo=True)
+        def github_close_issue(issue_number: int, reason: str = "completed",
+                              comment: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Close a GitHub issue with state reason.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "close issue #X"
+            - Marking issues as completed/wontfix/duplicate
+            - Closing issues with explanatory comments
+            - Batch closing related issues
+
+            This tool automatically:
+            - Adds optional comment before closing
+            - Sets appropriate close reason
+            - Updates issue state to closed
+            - Returns updated issue information
+
+            Args:
+                issue_number: Issue number to close
+                reason: Close reason (completed, not_planned, duplicate)
+                comment: Optional comment to add before closing
+
+            Returns:
+                Updated issue information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            result = github_client.close_issue(issue_number, reason=reason, comment=comment)
+
+            console_logger.info(
+                f"Closed issue #{issue_number} with reason: {reason}",
+                extra={
+                    "operation": "github_close_issue",
+                    "issue_number": issue_number,
+                    "reason": reason
+                }
+            )
+
+            return {
+                "success": True,
+                "issue": result,
+                "message": f"Issue #{issue_number} closed as {reason}"
+            }
 
 
-@mcp.tool()
-@github_operation("add sub-issue", require_repo=True)
-def github_add_sub_issue(parent_issue_number: int, sub_issue_number: int, replace_parent: bool = False) -> Dict[str, Any]:
-    """
-    Add a sub-issue relationship to a parent issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "add issue #Y as sub-issue of #X"
-    - User asks to "link issue #Y to parent #X"
-    - Breaking down complex issues into sub-tasks
-    - Creating hierarchical issue relationships
-    - Re-parenting an issue (with replace_parent=True)
-    
-    This tool creates a parent-child relationship between two existing issues.
-    Use replace_parent=True if the sub-issue already has a different parent.
-    
-    Args:
-        parent_issue_number: The parent issue number
-        sub_issue_number: The issue number to add as a sub-issue
-        replace_parent: Whether to replace the current parent (re-parenting)
-        
-    Returns:
-        Operation result with relationship details
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Note: GitHub sub-issues API uses issue numbers, not IDs
-    # The client method expects sub_issue_id but we're passing issue number
-    # This works because the API accepts issue numbers in the current repository
-    github_client.add_sub_issue(parent_issue_number, sub_issue_number, replace_parent)
-    
-    console_logger.info(f"Added issue #{sub_issue_number} as sub-issue of #{parent_issue_number}")
-    
-    return {
-        "success": True,
-        "parent_issue": parent_issue_number,
-        "sub_issue": sub_issue_number,
-        "replaced_parent": replace_parent,
-        "message": f"Successfully added issue #{sub_issue_number} as sub-issue of #{parent_issue_number}"
-    }
+        @mcp.tool()
+        @github_operation("assign issue", require_repo=True)
+        def github_assign_issue(issue_number: int, assignees: List[str],
+                               operation: str = "add") -> Dict[str, Any]:
+            """
+            Assign or unassign users to/from a GitHub issue.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "assign issue #X to @user"
+            - User asks to "unassign @user from issue #X"
+            - Managing workload distribution
+            - Claiming issues for work
+
+            This tool automatically:
+            - Validates usernames exist
+            - Adds or removes assignees
+            - Updates issue assignee list
+            - Returns updated issue information
+
+            Args:
+                issue_number: Issue number
+                assignees: List of usernames to assign/unassign
+                operation: "add" to assign, "remove" to unassign
+
+            Returns:
+                Updated issue information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            result = github_client.assign_issue(issue_number, assignees, operation)
+
+            action = "assigned to" if operation == "add" else "unassigned from"
+            console_logger.info(
+                f"Users {assignees} {action} issue #{issue_number}",
+                extra={
+                    "operation": "github_assign_issue",
+                    "issue_number": issue_number,
+                    "assignees": assignees,
+                    "action": operation
+                }
+            )
+
+            return {
+                "success": True,
+                "issue": result,
+                "message": f"Users {', '.join(assignees)} {action} issue #{issue_number}"
+            }
 
 
-@mcp.tool()
-@github_operation("remove sub-issue", require_repo=True)
-def github_remove_sub_issue(parent_issue_number: int, sub_issue_number: int) -> Dict[str, Any]:
-    """
-    Remove a sub-issue relationship from a parent issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "remove sub-issue #Y from #X"
-    - User asks to "unlink issue #Y from parent #X"
-    - Reorganizing issue hierarchy
-    - Making a sub-issue independent
-    - Correcting mistaken relationships
-    
-    This tool removes the parent-child relationship between two issues.
-    The sub-issue becomes independent but is not deleted.
-    
-    Args:
-        parent_issue_number: The parent issue number
-        sub_issue_number: The sub-issue number to remove
-        
-    Returns:
-        Operation result confirming removal
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Remove sub-issue (API accepts issue number for current repo)
-    github_client.remove_sub_issue(parent_issue_number, sub_issue_number)
-    
-    console_logger.info(f"Removed issue #{sub_issue_number} from parent #{parent_issue_number}")
-    
-    return {
-        "success": True,
-        "parent_issue": parent_issue_number,
-        "removed_sub_issue": sub_issue_number,
-        "message": f"Successfully removed issue #{sub_issue_number} from parent #{parent_issue_number}"
-    }
+        @mcp.tool()
+        @github_operation("update issue", require_repo=True)
+        def github_update_issue(issue_number: int, title: Optional[str] = None,
+                               body: Optional[str] = None, labels: Optional[List[str]] = None,
+                               milestone: Optional[int] = None, assignees: Optional[List[str]] = None,
+                               state: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Update issue properties (title, body, labels, milestone, assignees).
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "update issue #X title/description"
+            - User asks to "add labels to issue #X"
+            - User asks to "set milestone for issue #X"
+            - Bulk updating issue properties
+
+            This tool automatically:
+            - Updates only specified fields
+            - Validates milestone exists
+            - Preserves unspecified fields
+            - Returns updated issue information
+
+            Args:
+                issue_number: Issue number to update
+                title: New title (optional)
+                body: New body/description (optional)
+                labels: New labels list (optional)
+                milestone: Milestone number (optional, None to remove)
+                assignees: New assignees list (optional)
+                state: New state (optional)
+
+            Returns:
+                Updated issue information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Build kwargs for update
+            update_kwargs = {}
+            if title is not None:
+                update_kwargs['title'] = title
+            if body is not None:
+                update_kwargs['body'] = body
+            if labels is not None:
+                update_kwargs['labels'] = labels
+            if milestone is not None:
+                update_kwargs['milestone'] = milestone
+            if assignees is not None:
+                update_kwargs['assignees'] = assignees
+            if state is not None:
+                update_kwargs['state'] = state
+
+            result = github_client.update_issue(issue_number, **update_kwargs)
+
+            console_logger.info(
+                f"Updated issue #{issue_number}",
+                extra={
+                    "operation": "github_update_issue",
+                    "issue_number": issue_number,
+                    "updated_fields": list(update_kwargs.keys())
+                }
+            )
+
+            return {
+                "success": True,
+                "issue": result,
+                "updated_fields": list(update_kwargs.keys()),
+                "message": f"Issue #{issue_number} updated successfully"
+            }
 
 
-@mcp.tool()
-@github_operation("create sub-issue", require_repo=True)
-def github_create_sub_issue(parent_issue_number: int, title: str, body: str = "", labels: Optional[List[str]] = None) -> Dict[str, Any]:
-    """
-    Create a new issue and immediately add it as a sub-issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "create a sub-task for issue #X"
-    - User asks to "add a new sub-issue to #X with title..."
-    - Breaking down work while creating new issues
-    - Creating subtasks from a checklist
-    - Planning implementation details
-    
-    This tool combines issue creation with sub-issue linking in one operation.
-    The new issue inherits context from the parent.
-    
-    Args:
-        parent_issue_number: The parent issue number
-        title: Title for the new sub-issue
-        body: Description/body for the new sub-issue
-        labels: Optional labels to apply (inherits parent labels if not specified)
-        
-    Returns:
-        Created sub-issue information with relationship details
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Get parent issue for context
-    parent_issue = github_client.get_issue(parent_issue_number)
-    
-    # Inherit labels from parent if not specified
-    if labels is None:
-        labels = parent_issue.get("labels", [])
-    
-    # Add reference to parent in body
-    enhanced_body = f"{body}\n\n---\nSub-issue of #{parent_issue_number}" if body else f"Sub-issue of #{parent_issue_number}"
-    
-    # Create the issue
-    new_issue = github_client.create_issue(
-        title=title,
-        body=enhanced_body,
-        labels=labels
-    )
-    
-    # Add as sub-issue
-    github_client.add_sub_issue(parent_issue_number, new_issue["number"], replace_parent=False)
-    
-    console_logger.info(f"Created issue #{new_issue['number']} as sub-issue of #{parent_issue_number}")
-    
-    return {
-        "success": True,
-        "parent_issue": parent_issue_number,
-        "sub_issue": {
-            "number": new_issue["number"],
-            "title": new_issue["title"],
-            "url": new_issue["url"],
-            "state": new_issue["state"],
-            "labels": new_issue["labels"]
-        },
-        "message": f"Created issue #{new_issue['number']} as sub-issue of #{parent_issue_number}"
-    }
+        @mcp.tool()
+        @github_operation("search issues", require_repo=True)
+        def github_search_issues(query: str, sort: Optional[str] = None,
+                                order: str = "desc", limit: Optional[int] = None) -> Dict[str, Any]:
+            """
+            Search issues using GitHub's search API with advanced queries.
+
+            WHEN TO USE THIS TOOL:
+            - User provides complex search criteria
+            - User asks for "issues created after date X"
+            - User asks for "unassigned bugs in milestone Y"
+            - Advanced filtering beyond basic fetch_issues
+
+            This tool automatically:
+            - Uses GitHub search syntax
+            - Adds repository qualifier if needed
+            - Filters out pull requests
+            - Returns matching issues
+
+            Args:
+                query: Search query using GitHub syntax
+                sort: Sort by (comments, created, updated)
+                order: Sort order (asc, desc)
+                limit: Maximum results (applied after fetching)
+
+            Returns:
+                List of matching issues
+
+            Example queries:
+            - "is:issue is:open milestone:v0.3.5"
+            - "is:issue assignee:@me label:bug"
+            - "is:issue is:open no:assignee"
+            - "is:issue created:>2025-01-01"
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            issues = github_client.search_issues(query, sort=sort, order=order)
+
+            # Apply limit if specified
+            if limit and len(issues) > limit:
+                issues = issues[:limit]
+
+            console_logger.info(
+                f"Search found {len(issues)} issues",
+                extra={
+                    "operation": "github_search_issues",
+                    "query": query,
+                    "count": len(issues)
+                }
+            )
+
+            return {
+                "issues": issues,
+                "count": len(issues),
+                "query": query,
+                "sort": sort,
+                "order": order
+            }
 
 
-@mcp.tool()
-@github_operation("reorder sub-issues", require_repo=True)
-def github_reorder_sub_issues(parent_issue_number: int, sub_issue_numbers: List[int]) -> Dict[str, Any]:
-    """
-    Reorder sub-issues within a parent issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "reorder sub-issues for #X"
-    - User provides a specific order like "put #3 before #2"
-    - Prioritizing sub-tasks
-    - Organizing workflow sequence
-    - Adjusting implementation order
-    
-    This tool sets the display order of sub-issues under a parent.
-    Provide all sub-issue numbers in the desired order.
-    
-    Args:
-        parent_issue_number: The parent issue number
-        sub_issue_numbers: Ordered list of sub-issue numbers
-        
-    Returns:
-        Operation result with new ordering
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Note: The API accepts issue numbers for current repository
-    # Even though the parameter is named sub_issue_ids, it works with issue numbers
-    github_client.reorder_sub_issues(parent_issue_number, sub_issue_numbers)
-    
-    console_logger.info(f"Reordered {len(sub_issue_numbers)} sub-issues for issue #{parent_issue_number}")
-    
-    return {
-        "success": True,
-        "parent_issue": parent_issue_number,
-        "new_order": sub_issue_numbers,
-        "message": f"Successfully reordered {len(sub_issue_numbers)} sub-issues"
-    }
+        # Milestone Management Tools
+
+        @mcp.tool()
+        @github_operation("list milestones", require_repo=True)
+        def github_list_milestones(state: str = "open", sort: str = "due_on",
+                                  direction: str = "asc") -> Dict[str, Any]:
+            """
+            List repository milestones for release planning.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "list milestones"
+            - User asks "what releases are planned?"
+            - Planning version releases
+            - Before creating or updating milestones
+
+            This tool automatically:
+            - Lists all milestones by state
+            - Shows progress (open/closed issues)
+            - Includes due dates
+            - Sorts by due date or completeness
+
+            Args:
+                state: Milestone state (open, closed, all)
+                sort: Sort by (due_on, completeness)
+                direction: Sort direction (asc, desc)
+
+            Returns:
+                List of milestone information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            milestones = github_client.list_milestones(state=state, sort=sort, direction=direction)
+
+            console_logger.info(
+                f"Listed {len(milestones)} milestones",
+                extra={
+                    "operation": "github_list_milestones",
+                    "state": state,
+                    "count": len(milestones)
+                }
+            )
+
+            return {
+                "milestones": milestones,
+                "count": len(milestones),
+                "state": state,
+                "repository": github_client.get_current_repository().full_name
+            }
 
 
-@mcp.tool()
-@github_operation("add sub-issues to project", require_repo=True, require_projects=True)
-def github_add_sub_issues_to_project(project_id: str, parent_issue_number: int) -> Dict[str, Any]:
-    """
-    Add all sub-issues of a parent issue to a GitHub Project V2.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "add all sub-issues of #X to project"
-    - User asks to "track sub-tasks in project board"
-    - Managing hierarchical issues in project view
-    - After creating sub-issues for better visualization
-    - Bulk project organization
-    
-    This tool automatically adds all sub-issues with smart field assignment,
-    inheriting relevant values from the parent issue where appropriate.
-    
-    Args:
-        project_id: Project node ID (starts with PVT_)
-        parent_issue_number: Parent issue number with sub-issues
-        
-    Returns:
-        Operation result with added sub-issues and field assignments
-    """
-    github_client, _, _, _, projects_manager = get_github_instances()
-    
-    current_repo = github_client.get_current_repository()
-    
-    # Execute smart add sub-issues with async handling
-    result = run_async_in_thread(
-        projects_manager.smart_add_sub_issues_to_project(
-            project_id, parent_issue_number, current_repo, github_client
-        )
-    )
-    
-    console_logger.info(
-        f"Added {result['added_count']} sub-issues from parent #{parent_issue_number} to project"
-    )
-    
-    return {
-        "success": True,
-        "parent_issue": parent_issue_number,
-        "project_id": project_id,
-        "added_count": result["added_count"],
-        "failed_count": result["failed_count"],
-        "sub_issues": result["sub_issues"],
-        "failed_sub_issues": result.get("failed_sub_issues", []),
-        "message": result["message"]
-    }
+        @mcp.tool()
+        @github_operation("create milestone", require_repo=True)
+        def github_create_milestone(title: str, description: Optional[str] = None,
+                                  due_on: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Create a new milestone for release planning.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "create milestone for v0.3.5"
+            - Planning new releases
+            - Setting up version targets
+            - Organizing issues by release
+
+            This tool automatically:
+            - Creates milestone with title
+            - Sets optional description
+            - Sets optional due date
+            - Returns milestone details
+
+            Args:
+                title: Milestone title
+                description: Milestone description
+                due_on: Due date in ISO format (YYYY-MM-DD)
+
+            Returns:
+                Created milestone information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            milestone = github_client.create_milestone(title=title, description=description, due_on=due_on)
+
+            console_logger.info(
+                f"Created milestone '{title}'",
+                extra={
+                    "operation": "github_create_milestone",
+                    "title": title,
+                    "number": milestone["number"]
+                }
+            )
+
+            return {
+                "success": True,
+                "milestone": milestone,
+                "message": f"Milestone '{title}' created successfully"
+            }
 
 
-# Enhanced GitHub Issue Management Tools (v0.3.4.post5)
+        @mcp.tool()
+        @github_operation("update milestone", require_repo=True)
+        def github_update_milestone(number: int, title: Optional[str] = None,
+                                  description: Optional[str] = None,
+                                  due_on: Optional[str] = None,
+                                  state: Optional[str] = None) -> Dict[str, Any]:
+            """
+            Update milestone properties.
 
-@mcp.tool()
-@github_operation("close issue", require_repo=True)
-def github_close_issue(issue_number: int, reason: str = "completed",
-                      comment: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Close a GitHub issue with state reason.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "close issue #X"
-    - Marking issues as completed/wontfix/duplicate
-    - Closing issues with explanatory comments
-    - Batch closing related issues
-    
-    This tool automatically:
-    - Adds optional comment before closing
-    - Sets appropriate close reason
-    - Updates issue state to closed
-    - Returns updated issue information
-    
-    Args:
-        issue_number: Issue number to close
-        reason: Close reason (completed, not_planned, duplicate)
-        comment: Optional comment to add before closing
-        
-    Returns:
-        Updated issue information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    result = github_client.close_issue(issue_number, reason=reason, comment=comment)
-    
-    console_logger.info(
-        f"Closed issue #{issue_number} with reason: {reason}",
-        extra={
-            "operation": "github_close_issue",
-            "issue_number": issue_number,
-            "reason": reason
-        }
-    )
-    
-    return {
-        "success": True,
-        "issue": result,
-        "message": f"Issue #{issue_number} closed as {reason}"
-    }
+            WHEN TO USE THIS TOOL:
+            - User asks to "update milestone #X"
+            - Changing milestone due dates
+            - Updating milestone descriptions
+            - Closing completed milestones
 
+            This tool automatically:
+            - Updates only specified fields
+            - Preserves unspecified fields
+            - Handles date formatting
+            - Returns updated milestone
 
-@mcp.tool()
-@github_operation("assign issue", require_repo=True)
-def github_assign_issue(issue_number: int, assignees: List[str],
-                       operation: str = "add") -> Dict[str, Any]:
-    """
-    Assign or unassign users to/from a GitHub issue.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "assign issue #X to @user"
-    - User asks to "unassign @user from issue #X"
-    - Managing workload distribution
-    - Claiming issues for work
-    
-    This tool automatically:
-    - Validates usernames exist
-    - Adds or removes assignees
-    - Updates issue assignee list
-    - Returns updated issue information
-    
-    Args:
-        issue_number: Issue number
-        assignees: List of usernames to assign/unassign
-        operation: "add" to assign, "remove" to unassign
-        
-    Returns:
-        Updated issue information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    result = github_client.assign_issue(issue_number, assignees, operation)
-    
-    action = "assigned to" if operation == "add" else "unassigned from"
-    console_logger.info(
-        f"Users {assignees} {action} issue #{issue_number}",
-        extra={
-            "operation": "github_assign_issue",
-            "issue_number": issue_number,
-            "assignees": assignees,
-            "action": operation
-        }
-    )
-    
-    return {
-        "success": True,
-        "issue": result,
-        "message": f"Users {', '.join(assignees)} {action} issue #{issue_number}"
-    }
+            Args:
+                number: Milestone number
+                title: New title (optional)
+                description: New description (optional)
+                due_on: New due date in ISO format (optional)
+                state: New state (open/closed) (optional)
+
+            Returns:
+                Updated milestone information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            # Build kwargs for update
+            update_kwargs = {}
+            if title is not None:
+                update_kwargs['title'] = title
+            if description is not None:
+                update_kwargs['description'] = description
+            if due_on is not None:
+                update_kwargs['due_on'] = due_on
+            if state is not None:
+                update_kwargs['state'] = state
+
+            milestone = github_client.update_milestone(number, **update_kwargs)
+
+            console_logger.info(
+                f"Updated milestone #{number}",
+                extra={
+                    "operation": "github_update_milestone",
+                    "number": number,
+                    "updated_fields": list(update_kwargs.keys())
+                }
+            )
+
+            return {
+                "success": True,
+                "milestone": milestone,
+                "updated_fields": list(update_kwargs.keys()),
+                "message": f"Milestone #{number} updated successfully"
+            }
 
 
-@mcp.tool()
-@github_operation("update issue", require_repo=True)
-def github_update_issue(issue_number: int, title: Optional[str] = None,
-                       body: Optional[str] = None, labels: Optional[List[str]] = None,
-                       milestone: Optional[int] = None, assignees: Optional[List[str]] = None,
-                       state: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Update issue properties (title, body, labels, milestone, assignees).
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "update issue #X title/description"
-    - User asks to "add labels to issue #X"
-    - User asks to "set milestone for issue #X"
-    - Bulk updating issue properties
-    
-    This tool automatically:
-    - Updates only specified fields
-    - Validates milestone exists
-    - Preserves unspecified fields
-    - Returns updated issue information
-    
-    Args:
-        issue_number: Issue number to update
-        title: New title (optional)
-        body: New body/description (optional)
-        labels: New labels list (optional)
-        milestone: Milestone number (optional, None to remove)
-        assignees: New assignees list (optional)
-        state: New state (optional)
-        
-    Returns:
-        Updated issue information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Build kwargs for update
-    update_kwargs = {}
-    if title is not None:
-        update_kwargs['title'] = title
-    if body is not None:
-        update_kwargs['body'] = body
-    if labels is not None:
-        update_kwargs['labels'] = labels
-    if milestone is not None:
-        update_kwargs['milestone'] = milestone
-    if assignees is not None:
-        update_kwargs['assignees'] = assignees
-    if state is not None:
-        update_kwargs['state'] = state
-    
-    result = github_client.update_issue(issue_number, **update_kwargs)
-    
-    console_logger.info(
-        f"Updated issue #{issue_number}",
-        extra={
-            "operation": "github_update_issue",
-            "issue_number": issue_number,
-            "updated_fields": list(update_kwargs.keys())
-        }
-    )
-    
-    return {
-        "success": True,
-        "issue": result,
-        "updated_fields": list(update_kwargs.keys()),
-        "message": f"Issue #{issue_number} updated successfully"
-    }
+        @mcp.tool()
+        @github_operation("close milestone", require_repo=True)
+        def github_close_milestone(number: int) -> Dict[str, Any]:
+            """
+            Close a completed milestone.
+
+            WHEN TO USE THIS TOOL:
+            - User asks to "close milestone #X"
+            - Milestone work is complete
+            - After a release is shipped
+            - Archiving old milestones
+
+            This tool automatically:
+            - Sets milestone state to closed
+            - Preserves all other properties
+            - Updates closed timestamp
+            - Returns milestone details
+
+            Args:
+                number: Milestone number to close
+
+            Returns:
+                Updated milestone information
+            """
+            github_client, _, _, _, _ = get_github_instances()
+
+            milestone = github_client.close_milestone(number)
+
+            console_logger.info(
+                f"Closed milestone #{number}",
+                extra={
+                    "operation": "github_close_milestone",
+                    "number": number,
+                    "title": milestone["title"]
+                }
+            )
+
+            return {
+                "success": True,
+                "milestone": milestone,
+                "message": f"Milestone #{number} '{milestone['title']}' closed successfully"
+            }
 
 
-@mcp.tool()
-@github_operation("search issues", require_repo=True)
-def github_search_issues(query: str, sort: Optional[str] = None,
-                        order: str = "desc", limit: Optional[int] = None) -> Dict[str, Any]:
-    """
-    Search issues using GitHub's search API with advanced queries.
-    
-    WHEN TO USE THIS TOOL:
-    - User provides complex search criteria
-    - User asks for "issues created after date X"
-    - User asks for "unassigned bugs in milestone Y"
-    - Advanced filtering beyond basic fetch_issues
-    
-    This tool automatically:
-    - Uses GitHub search syntax
-    - Adds repository qualifier if needed
-    - Filters out pull requests
-    - Returns matching issues
-    
-    Args:
-        query: Search query using GitHub syntax
-        sort: Sort by (comments, created, updated)
-        order: Sort order (asc, desc)
-        limit: Maximum results (applied after fetching)
-        
-    Returns:
-        List of matching issues
-        
-    Example queries:
-    - "is:issue is:open milestone:v0.3.5"
-    - "is:issue assignee:@me label:bug"
-    - "is:issue is:open no:assignee"
-    - "is:issue created:>2025-01-01"
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    issues = github_client.search_issues(query, sort=sort, order=order)
-    
-    # Apply limit if specified
-    if limit and len(issues) > limit:
-        issues = issues[:limit]
-    
-    console_logger.info(
-        f"Search found {len(issues)} issues",
-        extra={
-            "operation": "github_search_issues",
-            "query": query,
-            "count": len(issues)
-        }
-    )
-    
-    return {
-        "issues": issues,
-        "count": len(issues),
-        "query": query,
-        "sort": sort,
-        "order": order
-    }
-
-
-# Milestone Management Tools
-
-@mcp.tool()
-@github_operation("list milestones", require_repo=True)
-def github_list_milestones(state: str = "open", sort: str = "due_on",
-                          direction: str = "asc") -> Dict[str, Any]:
-    """
-    List repository milestones for release planning.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "list milestones"
-    - User asks "what releases are planned?"
-    - Planning version releases
-    - Before creating or updating milestones
-    
-    This tool automatically:
-    - Lists all milestones by state
-    - Shows progress (open/closed issues)
-    - Includes due dates
-    - Sorts by due date or completeness
-    
-    Args:
-        state: Milestone state (open, closed, all)
-        sort: Sort by (due_on, completeness)
-        direction: Sort direction (asc, desc)
-        
-    Returns:
-        List of milestone information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    milestones = github_client.list_milestones(state=state, sort=sort, direction=direction)
-    
-    console_logger.info(
-        f"Listed {len(milestones)} milestones",
-        extra={
-            "operation": "github_list_milestones",
-            "state": state,
-            "count": len(milestones)
-        }
-    )
-    
-    return {
-        "milestones": milestones,
-        "count": len(milestones),
-        "state": state,
-        "repository": github_client.get_current_repository().full_name
-    }
-
-
-@mcp.tool()
-@github_operation("create milestone", require_repo=True)
-def github_create_milestone(title: str, description: Optional[str] = None,
-                          due_on: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Create a new milestone for release planning.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "create milestone for v0.3.5"
-    - Planning new releases
-    - Setting up version targets
-    - Organizing issues by release
-    
-    This tool automatically:
-    - Creates milestone with title
-    - Sets optional description
-    - Sets optional due date
-    - Returns milestone details
-    
-    Args:
-        title: Milestone title
-        description: Milestone description
-        due_on: Due date in ISO format (YYYY-MM-DD)
-        
-    Returns:
-        Created milestone information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    milestone = github_client.create_milestone(title=title, description=description, due_on=due_on)
-    
-    console_logger.info(
-        f"Created milestone '{title}'",
-        extra={
-            "operation": "github_create_milestone",
-            "title": title,
-            "number": milestone["number"]
-        }
-    )
-    
-    return {
-        "success": True,
-        "milestone": milestone,
-        "message": f"Milestone '{title}' created successfully"
-    }
-
-
-@mcp.tool()
-@github_operation("update milestone", require_repo=True)
-def github_update_milestone(number: int, title: Optional[str] = None,
-                          description: Optional[str] = None,
-                          due_on: Optional[str] = None,
-                          state: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Update milestone properties.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "update milestone #X"
-    - Changing milestone due dates
-    - Updating milestone descriptions
-    - Closing completed milestones
-    
-    This tool automatically:
-    - Updates only specified fields
-    - Preserves unspecified fields
-    - Handles date formatting
-    - Returns updated milestone
-    
-    Args:
-        number: Milestone number
-        title: New title (optional)
-        description: New description (optional)
-        due_on: New due date in ISO format (optional)
-        state: New state (open/closed) (optional)
-        
-    Returns:
-        Updated milestone information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    # Build kwargs for update
-    update_kwargs = {}
-    if title is not None:
-        update_kwargs['title'] = title
-    if description is not None:
-        update_kwargs['description'] = description
-    if due_on is not None:
-        update_kwargs['due_on'] = due_on
-    if state is not None:
-        update_kwargs['state'] = state
-    
-    milestone = github_client.update_milestone(number, **update_kwargs)
-    
-    console_logger.info(
-        f"Updated milestone #{number}",
-        extra={
-            "operation": "github_update_milestone",
-            "number": number,
-            "updated_fields": list(update_kwargs.keys())
-        }
-    )
-    
-    return {
-        "success": True,
-        "milestone": milestone,
-        "updated_fields": list(update_kwargs.keys()),
-        "message": f"Milestone #{number} updated successfully"
-    }
-
-
-@mcp.tool()
-@github_operation("close milestone", require_repo=True)
-def github_close_milestone(number: int) -> Dict[str, Any]:
-    """
-    Close a completed milestone.
-    
-    WHEN TO USE THIS TOOL:
-    - User asks to "close milestone #X"
-    - Milestone work is complete
-    - After a release is shipped
-    - Archiving old milestones
-    
-    This tool automatically:
-    - Sets milestone state to closed
-    - Preserves all other properties
-    - Updates closed timestamp
-    - Returns milestone details
-    
-    Args:
-        number: Milestone number to close
-        
-    Returns:
-        Updated milestone information
-    """
-    github_client, _, _, _, _ = get_github_instances()
-    
-    milestone = github_client.close_milestone(number)
-    
-    console_logger.info(
-        f"Closed milestone #{number}",
-        extra={
-            "operation": "github_close_milestone",
-            "number": number,
-            "title": milestone["title"]
-        }
-    )
-    
-    return {
-        "success": True,
-        "milestone": milestone,
-        "message": f"Milestone #{number} '{milestone['title']}' closed successfully"
-    }
 
 
 # Context tracking tools

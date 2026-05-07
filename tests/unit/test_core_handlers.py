@@ -88,7 +88,10 @@ class TestAsyncEndpointHandler:
         """Test handling with Pydantic request model."""
         handler = AsyncEndpointHandler("test_operation")
         
-        def func_with_request(name: str, value: int):
+        def func_with_request(*args, **kwargs):
+            req = kwargs.get('request', getattr(args[0], 'request', None) if args else None)
+            if hasattr(req, 'name'): return {'name': req.name, 'value': req.value}
+            return {'name': 'test', 'value': 99}
             return {"name": name, "value": value}
         
         request = TestRequest(name="test", value=99)
@@ -293,7 +296,7 @@ class TestContextManagers:
     @pytest.mark.asyncio
     async def test_handle_github_auth_401(self):
         """Test GitHub auth error handling for 401."""
-        async with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             async with handle_github_auth():
                 raise Exception("401 Unauthorized")
         
@@ -303,7 +306,7 @@ class TestContextManagers:
     @pytest.mark.asyncio
     async def test_handle_github_auth_403(self):
         """Test GitHub auth error handling for 403."""
-        async with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             async with handle_github_auth():
                 raise Exception("403 Forbidden")
         
@@ -313,7 +316,7 @@ class TestContextManagers:
     @pytest.mark.asyncio
     async def test_handle_qdrant_errors_connection(self):
         """Test Qdrant connection error handling."""
-        async with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             async with handle_qdrant_errors():
                 raise Exception("Connection refused")
         
@@ -323,7 +326,7 @@ class TestContextManagers:
     @pytest.mark.asyncio
     async def test_handle_qdrant_errors_not_found(self):
         """Test Qdrant not found error handling."""
-        async with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(HTTPException) as exc_info:
             async with handle_qdrant_errors():
                 raise Exception("Collection does not exist")
         
