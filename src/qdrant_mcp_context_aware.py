@@ -18,6 +18,10 @@ import traceback
 import shutil
 import asyncio
 import concurrent.futures
+import warnings
+
+# Suppress annoying library-level SyntaxWarnings (like those in qdrant-client docstrings)
+warnings.filterwarnings("ignore", category=SyntaxWarning, message="invalid escape sequence")
 from typing import Dict, List, Optional, Any, Set, Tuple, Callable
 from pathlib import Path
 from datetime import datetime
