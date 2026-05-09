@@ -32,13 +32,6 @@ cat > "$PKG_DIR/usr/bin/${PKG_NAME}" << 'EOF'
 # Wrapper for qdrant-rag-mcp
 # This script ensures the server runs from /opt/qdrant-rag-mcp using the global uv environment
 
-# Check if uv is installed
-if ! command -v uv &> /dev/null; then
-    echo "❌ Error: 'uv' not found. This package requires 'uv' (ultraviolet) to manage its environment." >&2
-    echo "   Please install it: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2
-    exit 1
-fi
-
 # IMPORTANT: Save current directory for context detection
 export MCP_CLIENT_CWD="$(pwd)"
 
@@ -52,7 +45,6 @@ CONFIG_LOCATIONS=(
 
 for LOC in "${CONFIG_LOCATIONS[@]}"; do
     if [ -f "$LOC" ]; then
-        # echo "ℹ️  Loading config from $LOC" >&2
         set -a
         source "$LOC"
         set +a
@@ -60,12 +52,19 @@ for LOC in "${CONFIG_LOCATIONS[@]}"; do
     fi
 done
 
-# Run the server directly using the venv binary if it exists, otherwise fall back to uv run
-if [ -f "/opt/qdrant-rag-mcp/.venv/bin/qdrant-rag-mcp" ]; then
-    exec /opt/qdrant-rag-mcp/.venv/bin/qdrant-rag-mcp "$@"
-else
-    exec uv run --directory "/opt/qdrant-rag-mcp" qdrant-rag-mcp "$@"
+# Check for uv
+UV_CMD="uv"
+if ! command -v uv &> /dev/null; then
+    if [ -f "$HOME/.local/bin/uv" ]; then
+        UV_CMD="$HOME/.local/bin/uv"
+    fi
 fi
+
+# Run the server
+# We use the venv python directly to completely bypass 'uv run' and its sync checks.
+# This ensures that regular users can run the server even if /opt is root-owned.
+export PYTHONPATH="/opt/qdrant-rag-mcp/src:$PYTHONPATH"
+exec /opt/qdrant-rag-mcp/.venv/bin/python /opt/qdrant-rag-mcp/src/qdrant_mcp_context_aware.py "$@"
 EOF
 chmod +x "$PKG_DIR/usr/bin/${PKG_NAME}"
 
@@ -91,34 +90,70 @@ cat > "$PKG_DIR/DEBIAN/postinst" << 'EOF'
 #!/bin/bash
 set -e
 echo "🔧 Initializing environment for qdrant-rag-mcp..."
-echo "📦 This may take a few minutes as it downloads large dependencies (e.g., torch, transformers)..."
+echo "📦 This may take a few minutes as it downloads large dependencies..."
 
-if command -v uv &> /dev/null; then
+# Try to find uv in common locations
+UV_CMD="uv"
+if ! command -v uv &> /dev/null; then
+    # Check common install locations
+    POSSIBLE_UV=(
+        "/usr/local/bin/uv"
+        "/usr/bin/uv"
+        "$HOME/.local/bin/uv"
+        "/root/.local/bin/uv"
+    )
+    for loc in "${POSSIBLE_UV[@]}"; do
+        if [ -f "$loc" ]; then
+            UV_CMD="$loc"
+            break
+        fi
+    done
+fi
+
+if command -v "$UV_CMD" &> /dev/null; then
     cd /opt/qdrant-rag-mcp
-    # Perform a full sync with all specialized model dependencies
-    uv sync --no-dev --extra models --extra performance
 
     # Initialize a default .env if it doesn't exist
-    if [ ! -f "/opt/qdrant-rag-mcp/.env" ]; then
+    if [ ! -f ".env" ]; then
         echo "📝 Creating default system-wide .env..."
         cp .env.example .env 2>/dev/null || touch .env
-        echo "# Qdrant RAG MCP Global Configuration" > .env
-        echo "QDRANT_HOST=localhost" >> .env
-        echo "QDRANT_PORT=6333" >> .env
-        echo "LOG_LEVEL=INFO" >> .env
-        echo "SENTENCE_TRANSFORMERS_HOME=/opt/qdrant-rag-mcp/.cache/models" >> .env
+        {
+            echo "# Qdrant RAG MCP Global Configuration"
+            echo "QDRANT_HOST=localhost"
+            echo "QDRANT_PORT=6333"
+            echo "LOG_LEVEL=INFO"
+            echo "SENTENCE_TRANSFORMERS_HOME=/opt/qdrant-rag-mcp/.cache/models"
+        } > .env
     fi
 
-    # Ensure cache directory exists and is writable
+    # Sync environment - CRITICAL: use --no-editable to avoid permission issues later
+    echo "🔄 Running uv sync..."
+    "$UV_CMD" sync --no-dev --no-editable --extra models --extra performance
+
+    # Also install the project itself via pip to ensure it's not editable
+    echo "📦 Installing project as a regular package..."
+    "$UV_CMD" pip install .
+
+    # Clean up any leftover editable implementations or .pth files that cause permission errors
+    echo "🧹 Cleaning up editable hooks..."
+    find .venv -name "*_editable_impl_*.pth" -delete 2>/dev/null || true
+    find .venv -name "*.pth" -exec grep -l "editable" {} + | xargs rm -f 2>/dev/null || true
+
+    # Ensure cache directory exists
     mkdir -p /opt/qdrant-rag-mcp/.cache/models
 
-    # Ensure all users can read and execute the environment
+    # Set permissions
     echo "🔐 Setting permissions..."
+    # Make everything in /opt/qdrant-rag-mcp owned by root but readable by all
+    chown -R root:root /opt/qdrant-rag-mcp
     chmod -R 755 /opt/qdrant-rag-mcp
-    # Allow writing to the global cache for model downloads if run as root/sudo
+
+    # Allow writing to cache and logs (if any)
     chmod -R 777 /opt/qdrant-rag-mcp/.cache
+
+    echo "✅ Environment initialized successfully"
 else
-    echo "⚠️  Warning: 'uv' not found. You will need to install it and run 'uv sync' in /opt/qdrant-rag-mcp manually."
+    echo "⚠️  Warning: 'uv' not found. Please install it and run 'uv sync' in /opt/qdrant-rag-mcp manually."
 fi
 
 exit 0

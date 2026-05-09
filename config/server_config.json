@@ -68,7 +68,9 @@
         "bm25": 0.3
       }
     },
-    "exact_match_bonus": 0.2
+    "exact_match_bonus": 0.2,
+    "sparse_method": "${QDRANT_SPARSE_METHOD:-bm42}",
+    "sparse_model": "${QDRANT_SPARSE_MODEL:-Qdrant/bm42-all-minilm-l6-v2-attentions}"
   },
   "collections": {
     "code": "code_collection",
@@ -137,7 +139,7 @@
     }
   },
   "github": {
-    "enabled": "${GITHUB_ENABLED:-true}",
+    "enabled": "${GITHUB_ENABLED:-false}",
     "authentication": {
       "token": "${GITHUB_TOKEN:-}",
       "app_id": "${GITHUB_APP_ID:-}",

@@ -84,6 +84,7 @@ from utils.context_tracking import (
 from utils.model_registry import get_model_registry
 from utils.memory_manager import get_memory_manager
 from utils.embeddings import get_embeddings_manager
+from utils.sparse_embeddings import get_sparse_embeddings_manager
 from core.decorators import github_operation, get_github_instances
 from indexers import CodeIndexer, ConfigIndexer, DocumentationIndexer
 from utils.dependency_resolver import DependencyResolver
@@ -670,15 +671,31 @@ def ensure_collection(
 
             # Use provided values if specified, otherwise use detected values
             final_model_name = embedding_model_name or actual_model_name
-            final_dimension = embedding_dimension or actual_dimension
+                        final_dimension = embedding_dimension or actual_dimension
 
             # Create collection with vectors config
-            client.create_collection(
-                collection_name=collection_name,
-                vectors_config=VectorParams(
-                    size=final_dimension, distance=Distance.COSINE
-                ),
-            )
+            config = get_config()
+            sparse_method = config.get("hybrid_search.sparse_method", "bm25")
+
+            if sparse_method == "bm42":
+                client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(
+                        size=final_dimension, distance=Distance.COSINE
+                    ),
+                    sparse_vectors_config={
+                        "sparse": SparseVectorParams(
+                            modifier=Modifier.IDF
+                        )
+                    }
+                )
+            else:
+                client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=VectorParams(
+                        size=final_dimension, distance=Distance.COSINE
+                    ),
+                )
 
             # Store model metadata in a special point
             metadata_point_id = hashlib.md5(
@@ -1651,6 +1668,7 @@ def index_code(file_path: str, force_global: bool = False) -> Dict[str, Any]:
         file_path: Path to the file to index
         force_global: If True, index to global collection instead of project
     """
+    config = get_config()
 
     start_time = time.time()
 
@@ -1797,7 +1815,15 @@ def index_code(file_path: str, force_global: bool = False) -> Dict[str, Any]:
                 if key in chunk.metadata:
                     payload[key] = chunk.metadata[key]
 
-            point = PointStruct(id=chunk_id, vector=embedding, payload=payload)
+            vector_data = embedding
+            if config.get("hybrid_search.sparse_method", "bm25") == "bm42":
+                sparse_manager = get_sparse_embeddings_manager()
+                if sparse_manager:
+                    sparse_embedding = sparse_manager.embed_document(chunk.content)
+                    if sparse_embedding is not None:
+                        vector_data = {"": embedding, "sparse": sparse_embedding}
+
+            point = PointStruct(id=chunk_id, vector=vector_data, payload=payload)
             points.append(point)
 
         # Store in Qdrant
@@ -1821,7 +1847,8 @@ def index_code(file_path: str, force_global: bool = False) -> Dict[str, Any]:
                 documents.append(doc)
 
             # Append new documents to BM25 index (more efficient than rebuilding)
-            hybrid_searcher.bm25_manager.append_documents(collection_name, documents)
+            if config.get("hybrid_search.sparse_method", "bm25") == "bm25":
+                hybrid_searcher.bm25_manager.append_documents(collection_name, documents)
 
         duration_ms = (time.time() - start_time) * 1000
         result = {
@@ -1925,6 +1952,7 @@ def index_documentation(file_path: str, force_global: bool = False) -> Dict[str,
         file_path: Path to the documentation file to index
         force_global: If True, index to global collection instead of project
     """
+    config = get_config()
 
     start_time = time.time()
 
@@ -2064,7 +2092,15 @@ def index_documentation(file_path: str, force_global: bool = False) -> Dict[str,
             if "frontmatter" in chunk["metadata"] and chunk["metadata"]["frontmatter"]:
                 payload["frontmatter"] = chunk["metadata"]["frontmatter"]
 
-            point = PointStruct(id=chunk_id, vector=embedding, payload=payload)
+            vector_data = embedding
+            if config.get("hybrid_search.sparse_method", "bm25") == "bm42":
+                sparse_manager = get_sparse_embeddings_manager()
+                if sparse_manager:
+                    sparse_embedding = sparse_manager.embed_document(chunk["content"])
+                    if sparse_embedding is not None:
+                        vector_data = {"": embedding, "sparse": sparse_embedding}
+
+            point = PointStruct(id=chunk_id, vector=vector_data, payload=payload)
             points.append(point)
 
         # Store in Qdrant
@@ -2088,7 +2124,8 @@ def index_documentation(file_path: str, force_global: bool = False) -> Dict[str,
 
             # Update BM25 index
             hybrid_searcher = get_hybrid_searcher()
-            hybrid_searcher.bm25_manager.update_index(collection_name, documents)
+            if config.get("hybrid_search.sparse_method", "bm25") == "bm25":
+                hybrid_searcher.bm25_manager.update_index(collection_name, documents)
 
         duration_ms = (time.time() - start_time) * 1000
 
@@ -5143,6 +5180,7 @@ def index_config(file_path: str, force_global: bool = False) -> Dict[str, Any]:
     - Uses config-specific embeddings
     - Handles environment variables
     """
+    config = get_config()
     try:
         # Resolve to absolute path
         abs_path = Path(file_path).resolve()
@@ -5323,7 +5361,8 @@ def index_config(file_path: str, force_global: bool = False) -> Dict[str, Any]:
                 }
                 all_docs.append(doc)
 
-            hybrid_searcher.bm25_manager.update_index(collection_name, all_docs)
+            if config.get("hybrid_search.sparse_method", "bm25") == "bm25":
+                    hybrid_searcher.bm25_manager.update_index(collection_name, all_docs)
 
         return {
             "indexed": len(chunks),
@@ -8114,6 +8153,7 @@ def trigger_apple_silicon_cleanup(level: str = "standard") -> Dict[str, Any]:
 def initialize_bm25_indices():
     """Initialize BM25 indices for all existing collections on startup"""
     try:
+        config = get_config()
         console_logger.info("Initializing BM25 indices...")
         client = get_qdrant_client()
         hybrid_searcher = get_hybrid_searcher()
@@ -8161,7 +8201,8 @@ def initialize_bm25_indices():
 
             # Update BM25 index
             if all_docs:
-                hybrid_searcher.bm25_manager.update_index(collection_name, all_docs)
+                if config.get("hybrid_search.sparse_method", "bm25") == "bm25":
+                    hybrid_searcher.bm25_manager.update_index(collection_name, all_docs)
                 console_logger.info(
                     f"  Indexed {len(all_docs)} documents for {collection_name}"
                 )

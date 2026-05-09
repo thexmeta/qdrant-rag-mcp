@@ -137,6 +137,8 @@ class Config:
         """Apply environment variables to configuration"""
         # Map of config paths to environment variables
         env_mappings = {
+            "hybrid_search.sparse_method": "QDRANT_SPARSE_METHOD",
+            "hybrid_search.sparse_model": "QDRANT_SPARSE_MODEL",
             "github.enabled": "GITHUB_ENABLED",
             "server.port": "SERVER_PORT",
             "server.log_level": "LOG_LEVEL",

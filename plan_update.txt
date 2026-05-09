@@ -1,0 +1,26 @@
+Here is the concrete plan to add BM42 support:
+
+1. Update `requirements.txt` to add `fastembed>=0.2.0,<1.0.0`
+2. Update `config/server_config.json` and `src/config.py`:
+   - Under `"hybrid_search"`, add `"sparse_method": "bm42"` and `"sparse_model": "Qdrant/bm42-all-minilm-l6-v2-attentions"`
+3. Implement `src/utils/sparse_embeddings.py` exposing `SparseEmbeddingsManager` wrapped with `fastembed`.
+4. Update `src/qdrant_mcp_context_aware.py`:
+   - `ensure_collection`: Create `sparse_vectors_config={"sparse": models.SparseVectorParams(modifier=models.Modifier.IDF)}` if `config.hybrid_search.sparse_method == "bm42"`.
+   - Indexing operations (`index_code`, `index_documentation`, `index_config`): Add sparse embeddings to Qdrant points. Specifically:
+     ```python
+     if sparse_manager:
+         sparse_emb = sparse_manager.encode([chunk.content])[0]
+         sparse_vector = models.SparseVector(indices=sparse_emb.indices.tolist(), values=sparse_emb.values.tolist())
+         point = PointStruct(
+             id=chunk_id,
+             vector={"dense": embedding, "sparse": sparse_vector},  # Oops, we use "" for dense, so {"": embedding, "sparse": sparse_vector}
+             payload=payload
+         )
+     else:
+         point = PointStruct(id=chunk_id, vector=embedding, payload=payload)
+     ```
+5. Update `_perform_hybrid_search` in `src/qdrant_mcp_context_aware.py` to use native Qdrant BM42:
+   - Wait, if `sparse_method == "bm42"`, then when `search_mode == "keyword"`, we don't query local BM25 manager. Instead, we query `query_vector=models.NamedSparseVector(name="sparse", vector=models.SparseVector(indices=sparse_query.indices.tolist(), values=sparse_query.values.tolist()))`.
+   - If `search_mode == "hybrid"`, we do the same and get `bm42` scores instead of `bm25` scores. Since the fusion logic is the same, we can just replace the local Python BM25 call with the Qdrant sparse search call!
+   - Wait, if we use Qdrant's sparse vector, we MUST compute the sparse vector for the query: `sparse_query = sparse_manager.encode([query])[0]`.
+6. Apply these changes and test.
