@@ -27,11 +27,27 @@ echo ""
 
 # Show current specialized embeddings configuration
 echo -e "${GREEN}Current Specialized Embeddings Configuration:${NC}"
-echo -e "  Code: ${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}"
-echo -e "  Config: ${QDRANT_CONFIG_EMBEDDING_MODEL:-jinaai/jina-embeddings-v3}"
-echo -e "  Documentation: ${QDRANT_DOC_EMBEDDING_MODEL:-hkunlp/instructor-large}"
-echo -e "  General: ${QDRANT_GENERAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
-echo -e "  Enabled: ${QDRANT_SPECIALIZED_EMBEDDINGS_ENABLED:-true}"
+echo -e " Code: ${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}"
+echo -e " Config: ${QDRANT_CONFIG_EMBEDDING_MODEL:-jinaai/jina-embeddings-v3}"
+echo -e " Documentation: ${QDRANT_DOC_EMBEDDING_MODEL:-hkunlp/instructor-large}"
+echo -e " General: ${QDRANT_GENERAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
+echo -e " Enabled: ${QDRANT_SPECIALIZED_EMBEDDINGS_ENABLED:-true}"
+echo ""
+
+# Show ONNX models status
+echo -e "${GREEN}ONNX Models Status:${NC}"
+onnx_dir="${CACHE_DIR}/stella_en_400M_v5"
+if [ -d "$onnx_dir" ]; then
+echo -e " ${BLUE}Stella:${NC} Found at $onnx_dir"
+if [ -f "${onnx_dir}/int8/model.onnx" ]; then
+size=$(du -h "${onnx_dir}/int8/model.onnx" | cut -f1)
+echo -e "  ${GREEN}✓ int8${NC} downloaded ($size)"
+else
+echo -e "  ${YELLOW}int8 not downloaded${NC}"
+fi
+else
+echo -e " ${YELLOW}Stella ONNX models not downloaded${NC}"
+fi
 echo ""
 
 # Specialized Embedding Models (Phase 2 - Recommended)
@@ -146,9 +162,18 @@ done
 total_models=${#ALL_MODELS[@]}
 
 echo -e "${BLUE}=== QUICK OPTIONS ===${NC}"
-echo "   0. Download all specialized models (recommended)"
-echo "  88. Download all models (specialized + general)"
-echo "  99. Download custom model (enter name)"
+echo " 0. Download all specialized models (recommended)"
+echo " 88. Download all models (specialized + general)"
+echo " 99. Download custom model (enter name)"
+echo ""
+echo -e "${BLUE}=== ONNX MODEL DOWNLOADS ===${NC}"
+echo " 100. Download Stella ONNX model (NovaSearch/stella_en_400M_v5)"
+echo " 101. Download Llama Nemotron Rerank (cstr/llama-nemotron-rerank-1b-v2-ONNX)"
+echo " 102. Download Jina Reranker v3 (keisuke-miyako/jina-reranker-v3-onnx-int8-NG)"
+echo " 103. Download Sparse BM42 (Qdrant/all_miniLM_L6_v2_with_attentions)"
+echo " 104. Download all ONNX models"
+echo " 105. Download MiniLM-L12-v2 ONNX (keisuke-miyako/all-MiniLM-L12-v2-onnx-fp16)"
+echo " 106. Download CodeRankEmbed ONNX (mrsladoje/CodeRankEmbed-onnx-int8)"
 echo ""
 
 read -p "Select model(s) to download (comma-separated numbers): " choices
@@ -173,24 +198,24 @@ check_dependencies() {
 
 # Function to download a model
 download_model() {
-    local model=$1
-    
-    if check_model_exists "$model"; then
-        echo -e "${YELLOW}Model $model already exists. Skipping...${NC}"
-        return
-    fi
-    
-    echo -e "${BLUE}Downloading $model...${NC}"
-    
-    # Check if model needs trust_remote_code
-    local trust_remote_code="False"
-    if [[ "$model" == "nomic-ai/CodeRankEmbed" ]] || [[ "$model" == "jinaai/jina-embeddings-v3" ]]; then
-        trust_remote_code="True"
-        echo -e "${YELLOW}Note: This model requires trust_remote_code=True${NC}"
-    fi
-    
-    # Use Python to download
-    python3 -c "
+local model=$1
+
+if check_model_exists "$model"; then
+echo -e "${YELLOW}Model $model already exists. Skipping...${NC}"
+return 181
+fi
+
+echo -e "${BLUE}Downloading $model...${NC}"
+
+# Check if model needs trust_remote_code
+local trust_remote_code="False"
+if [[ "$model" == "nomic-ai/CodeRankEmbed" ]] || [[ "$model" == "jinaai/jina-embeddings-v3" ]]; then
+trust_remote_code="True"
+echo -e "${YELLOW}Note: This model requires trust_remote_code=True${NC}"
+fi
+
+# Use Python to download
+python3 -c "
 from sentence_transformers import SentenceTransformer
 import sys
 import os
@@ -200,24 +225,325 @@ cache_dir = '$CACHE_DIR'
 trust_remote = $trust_remote_code
 
 try:
-    print(f'Downloading {model_name} from Hugging Face...')
-    if trust_remote:
-        model = SentenceTransformer(model_name, cache_folder=cache_dir, trust_remote_code=True)
-    else:
-        model = SentenceTransformer(model_name, cache_folder=cache_dir)
-    print(f'Successfully downloaded {model_name}')
+print(f'Downloading {model_name} from Hugging Face...')
+if trust_remote:
+model = SentenceTransformer(model_name, cache_folder=cache_dir, trust_remote_code=True)
+else:
+model = SentenceTransformer(model_name, cache_folder=cache_dir)
+print(f'Successfully downloaded {model_name}')
 except Exception as e:
-    print(f'Error: {e}')
-    sys.exit(1)
+print(f'Error: {e}')
+sys.exit(1)
 "
-    
-    if [ $? -eq 0 ]; then
-        actual_size=$(get_model_size "$model")
-        echo -e "${GREEN}✓ $model downloaded successfully ($actual_size)${NC}"
-    else
-        echo -e "${RED}✗ Failed to download $model${NC}"
-        echo -e "${YELLOW}Tip: You may need to install additional dependencies or check your internet connection${NC}"
-    fi
+
+if [ $? -eq 0 ]; then
+actual_size=$(get_model_size "$model")
+echo -e "${GREEN}✓ $model downloaded successfully ($actual_size)${NC}"
+else
+echo -e "${RED}✗ Failed to download $model${NC}"
+echo -e "${YELLOW}Tip: You may need to install additional dependencies or check your internet connection${NC}"
+fi
+}
+
+# Function to download Stella ONNX model
+download_stella_onnx() {
+local quantization="${1:-int8}"
+local output_dir="${CACHE_DIR}/stella_en_400M_v5/${quantization}"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Stella ONNX Model Downloader${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+echo -e "${YELLOW}Model:${NC} NovaSearch/stella_en_400M_v5"
+echo -e "${YELLOW}Quantization:${NC} ${quantization}"
+echo -e "${YELLOW}
+
+# Function to download Stella ONNX from Hugging Face
+download_stella_onnx_from_hf() {
+local quantization="$1"
+local output_dir="$2"
+
+# Check if hf CLI is available
+if command -v hf &> /dev/null; then
+echo "Using hf CLI to download..."
+
+# Download ONNX model
+local model_file="onnx/model_${quantization}.onnx"
+if [ "$quantization" == "int8" ]; then
+model_file="onnx/model_int8.onnx"
+fi
+
+hf download NovaSearch/stella_en_400M_v5 "$model_file" \
+--revision 154316358e2c8bb71ef0fe7473fd12123acb293e \
+--local-dir "$output_dir" 2>/dev/null
+
+# Rename to model.onnx
+if [ -f "${output_dir}/${model_file}" ]; then
+mv "${output_dir}/${model_file}" "${output_dir}/model.onnx"
+fi
+
+# Download config files
+hf download NovaSearch/stella_en_400M_v5 \
+tokenizer.json tokenizer_config.json config.json \
+special_tokens_map.json modules.json config_sentence_transformers.json \
+--local-dir "$output_dir" 2>/dev/null
+
+elif command -v huggingface-cli &> /dev/null; then
+echo "Using huggingface-cli to download..."
+huggingface-cli download NovaSearch/stella_en_400M_v5 \
+--local-dir "$output_dir" \
+--revision 154316358e2c8bb71ef0fe7473fd12123acb293e
+else
+echo -e "${RED}hf CLI not found. Please install from: https://github.com/huggingface/hf-hub${NC}"
+echo "Or set STELLA_LOCAL_SOURCE to use a local copy."
+return 1
+fi
+}
+
+# Function to download Llama Nemotron Rerank ONNX
+download_llama_nemotron_onnx() {
+local quantization="${1:-int8}"
+local output_dir="${CACHE_DIR}/llama-nemotron-rerank-1b-v2-ONNX/${quantization}"
+local model_id="cstr/llama-nemotron-rerank-1b-v2-ONNX"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Llama Nemotron Rerank ONNX Downloader${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+echo -e "${YELLOW}Model:${NC} $model_id"
+echo -e "${YELLOW}Quantization:${NC} ${quantization}"
+echo -e "${YELLOW}Output:${NC} ${output_dir}"
+echo ""
+
+if [ -f "${output_dir}/model.onnx" ]; then
+echo -e "${GREEN}✓ Already exists. Skipping...${NC}"
+return 0
+fi
+
+# Check local source
+LOCAL_SOURCE="${STELLA_LOCAL_SOURCE:-/mnt/Meta/LLM/onnx}"
+if [ -d "${LOCAL_SOURCE}/llama-nemotron-rerank-1b-v2-ONNX" ]; then
+echo "Copying from local cache..."
+mkdir -p "$output_dir"
+local source_dir="${LOCAL_SOURCE}/llama-nemotron-rerank-1b-v2-ONNX"
+if [ -d "$source_dir" ]; then
+cp -r "${source_dir}/"* "$output_dir/" 2>/dev/null || true
+echo -e "${GREEN}✓ Copied from local source${NC}"
+else
+download_llama_nemotron_from_hf "$quantization" "$output_dir"
+fi
+else
+download_llama_nemotron_from_hf "$quantization" "$output_dir"
+fi
+
+if [ -f "${output_dir}/model.onnx" ]; then
+local size=$(du -h "${output_dir}/model.onnx" | cut -f1)
+echo -e "${GREEN}✓ Downloaded successfully - ${size}${NC}"
+else
+echo -e "${RED}✗ Failed to download${NC}"
+fi
+}
+
+download_llama_nemotron_from_hf() {
+local quantization="$1"
+local output_dir="$2"
+
+if command -v hf &> /dev/null; then
+hf download cstr/llama-nemotron-rerank-1b-v2-ONNX \
+--local-dir "$output_dir" 2>/dev/null
+elif command -v huggingface-cli &> /dev/null; then
+huggingface-cli download cstr/llama-nemotron-rerank-1b-v2-ONNX \
+--local-dir "$output_dir" 2>/dev/null
+else
+echo -e "${RED}hf CLI not found${NC}"
+return 1
+fi
+}
+
+# Function to download Jina Reranker v3 ONNX
+download_jina_reranker_onnx() {
+local output_dir="${CACHE_DIR}/jina-reranker-v3-onnx-int8-NG"
+local model_id="keisuke-miyako/jina-reranker-v3-onnx-int8-NG"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Jina Reranker v3 ONNX Downloader${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+echo -e "${YELLOW}Model:${NC} $model_id"
+echo -e "${YELLOW}Output:${NC} ${output_dir}"
+echo ""
+
+if [ -f "${output_dir}/model.onnx" ]; then
+echo -e "${GREEN}✓ Already exists. Skipping...${NC}"
+return 0
+fi
+
+LOCAL_SOURCE="${STELLA_LOCAL_SOURCE:-/mnt/Meta/LLM/onnx}"
+if [ -d "${LOCAL_SOURCE}/jina-reranker-v3-onnx-int8-NG" ]; then
+echo "Copying from local cache..."
+mkdir -p "$output_dir"
+cp -r "${LOCAL_SOURCE}/jina-reranker-v3-onnx-int8-NG/"* "$output_dir/" 2>/dev/null || true
+echo -e "${GREEN}✓ Copied from local source${NC}"
+else
+if command -v hf &> /dev/null; then
+hf download keisuke-miyako/jina-reranker-v3-onnx-int8-NG \
+--local-dir "$output_dir" 2>/dev/null
+elif command -v huggingface-cli &> /dev/null; then
+huggingface-cli download keisuke-miyako/jina-reranker-v3-onnx-int8-NG \
+--local-dir "$output_dir" 2>/dev/null
+else
+echo -e "${RED}hf CLI not found${NC}"
+return 1
+fi
+fi
+
+if [ -f "${output_dir}/model.onnx" ]; then
+local size=$(du -h "${output_dir}/model.onnx" | cut -f1)
+echo -e "${GREEN}✓ Downloaded successfully - ${size}${NC}"
+else
+echo -e "${RED}✗ Failed to download${NC}"
+fi
+}
+
+# Function to download Sparse BM42
+download_sparse_bm42() {
+local output_dir="${CACHE_DIR}/qdrant_all_miniLM_L6_v2_with_attentions"
+local model_id="Qdrant/all_miniLM_L6_v2_with_attentions"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}Sparse BM42 Downloader${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+echo -e "${YELLOW}Model:${NC} $model_id"
+echo -e "${YELLOW}Output:${NC} ${output_dir}"
+echo ""
+
+if [ -d "${output_dir}/snapshots" ] || [ -f "${output_dir}/config.json" ]; then
+echo -e "${GREEN}✓ Already exists. Skipping...${NC}"
+return 0
+fi
+
+LOCAL_SOURCE="${STELLA_LOCAL_SOURCE:-/mnt/Meta/LLM/onnx}"
+if [ -d "${LOCAL_SOURCE}/qdrant_all_miniLM_L6_v2_with_attentions" ]; then
+echo "Copying from local cache..."
+mkdir -p "$output_dir"
+cp -r "${LOCAL_SOURCE}/qdrant_all_miniLM_L6_v2_with_attentions/"* "$output_dir/" 2>/dev/null || true
+echo -e "${GREEN}✓ Copied from local source${NC}"
+else
+if command -v hf &> /dev/null; then
+hf download Qdrant/all_miniLM_L6_v2_with_attentions \
+--local-dir "$output_dir" 2>/dev/null
+elif command -v huggingface-cli &> /dev/null; then
+huggingface-cli download Qdrant/all_miniLM_L6_v2_with_attentions \
+--local-dir "$output_dir" 2>/dev/null
+else
+echo -e "${RED}hf CLI not found${NC}"
+return 1
+fi
+fi
+
+echo -e "${GREEN}✓ Downloaded successfully${NC}"
+}
+
+# Function to download all ONNX models
+download_all_onnx() {
+echo -e "${BLUE}Downloading all ONNX models...${NC}"
+download_stella_onnx "int8"
+download_llama_nemotron_onnx "int8"
+download_jina_reranker_onnx
+download_sparse_bm42
+download_minilm_l12_onnx
+download_coderankembed_onnx
+echo -e "${GREEN}✓ All ONNX models processed${NC}"
+}
+
+# Function to download MiniLM-L12-v2 ONNX
+download_minilm_l12_onnx() {
+local output_dir="${CACHE_DIR}/all-MiniLM-L12-v2-onnx-fp16"
+local model_id="keisuke-miyako/all-MiniLM-L12-v2-onnx-fp16"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}MiniLM-L12-v2 ONNX Downloader${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+echo -e "${YELLOW}Model:${NC} $model_id"
+echo -e "${YELLOW}Output:${NC} ${output_dir}"
+echo ""
+
+if [ -f "${output_dir}/model.onnx" ] || [ -d "${output_dir}/snapshots" ]; then
+echo -e "${GREEN}✓ Already exists. Skipping...${NC}"
+return 0
+fi
+
+LOCAL_SOURCE="${STELLA_LOCAL_SOURCE:-/mnt/Meta/LLM/onnx}"
+if [ -d "${LOCAL_SOURCE}/all-MiniLM-L12-v2-onnx-fp16" ]; then
+echo "Copying from local cache..."
+mkdir -p "$output_dir"
+cp -r "${LOCAL_SOURCE}/all-MiniLM-L12-v2-onnx-fp16/"* "$output_dir/" 2>/dev/null || true
+echo -e "${GREEN}✓ Copied from local source${NC}"
+else
+if command -v hf &> /dev/null; then
+hf download keisuke-miyako/all-MiniLM-L12-v2-onnx-fp16 \
+--local-dir "$output_dir" 2>/dev/null
+elif command -v huggingface-cli &> /dev/null; then
+huggingface-cli download keisuke-miyako/all-MiniLM-L12-v2-onnx-fp16 \
+--local-dir "$output_dir" 2>/dev/null
+else
+echo -e "${RED}hf CLI not found${NC}"
+return 1
+fi
+fi
+
+if [ -f "${output_dir}/model.onnx" ] || [ -d "${output_dir}/snapshots" ]; then
+echo -e "${GREEN}✓ Downloaded successfully${NC}"
+else
+echo -e "${RED}✗ Failed to download${NC}"
+fi
+}
+
+# Function to download CodeRankEmbed ONNX
+download_coderankembed_onnx() {
+local output_dir="${CACHE_DIR}/CodeRankEmbed-onnx-int8"
+local model_id="mrsladoje/CodeRankEmbed-onnx-int8"
+
+echo -e "${BLUE}========================================${NC}"
+echo -e "${BLUE}CodeRankEmbed ONNX Downloader${NC}"
+echo -e "${BLUE}========================================${NC}"
+echo ""
+echo -e "${YELLOW}Model:${NC} $model_id"
+echo -e "${YELLOW}Purpose:${NC} Code embeddings (ONNX INT8)"
+echo -e "${YELLOW}Output:${NC} ${output_dir}"
+echo ""
+
+if [ -f "${output_dir}/model.onnx" ] || [ -d "${output_dir}/snapshots" ]; then
+echo -e "${GREEN}✓ Already exists. Skipping...${NC}"
+return 0
+fi
+
+LOCAL_SOURCE="${STELLA_LOCAL_SOURCE:-/mnt/Meta/LLM/onnx}"
+if [ -d "${LOCAL_SOURCE}/CodeRankEmbed-onnx-int8" ]; then
+echo "Copying from local cache..."
+mkdir -p "$output_dir"
+cp -r "${LOCAL_SOURCE}/CodeRankEmbed-onnx-int8/"* "$output_dir/" 2>/dev/null || true
+echo -e "${GREEN}✓ Copied from local source${NC}"
+else
+if command -v hf &> /dev/null; then
+hf download mrsladoje/CodeRankEmbed-onnx-int8 \
+--local-dir "$output_dir" 2>/dev/null
+elif command -v huggingface-cli &> /dev/null; then
+huggingface-cli download mrsladoje/CodeRankEmbed-onnx-int8 \
+--local-dir "$output_dir" 2>/dev/null
+else
+echo -e "${RED}hf CLI not found${NC}"
+return 1
+fi
+fi
+
+if [ -f "${output_dir}/model.onnx" ] || [ -d "${output_dir}/snapshots" ]; then
+echo -e "${GREEN}✓ Downloaded successfully${NC}"
+else
+echo -e "${RED}✗ Failed to download${NC}"
+fi
 }
 
 # Check dependencies first
@@ -227,16 +553,65 @@ check_dependencies
 IFS=',' read -ra SELECTED <<< "$choices"
 
 for choice in "${SELECTED[@]}"; do
-    choice=$(echo $choice | xargs)  # Trim whitespace
-    
-    if [ "$choice" = "0" ]; then
-        # Download all specialized models (recommended)
-        echo -e "${BLUE}Downloading all specialized models (recommended)...${NC}"
-        for i in "${!SPECIALIZED_MODELS[@]}"; do
-            IFS=':' read -r model_name _ _ <<< "${SPECIALIZED_MODELS[$i]}"
-            download_model "$model_name"
-            echo ""
-        done
+choice=$(echo $choice | xargs) # Trim whitespace
+
+if [ "$choice" = "0" ]; then
+# Download all specialized models (recommended)
+echo -e "${BLUE}Downloading all specialized models - recommended...${NC}"
+for i in "${!SPECIALIZED_MODELS[@]}"; do
+IFS=':' read -r model_name _ _ <<< "${SPECIALIZED_MODELS[$i]}"
+download_model "$model_name"
+echo ""
+done
+elif [ "$choice" = "88" ]; then
+# Download all models (specialized + general)
+echo -e "${BLUE}Downloading all models (specialized + general)...${NC}"
+for i in "${!ALL_MODELS[@]}"; do
+IFS=':' read -r model_name _ _ <<< "${ALL_MODELS[$i]}"
+download_model "$model_name"
+echo ""
+done
+elif [ "$choice" = "99" ]; then
+# Custom model
+echo ""
+read -p "Enter model name: " custom_model
+if [ -n "$custom_model" ]; then
+download_model "$custom_model"
+fi
+elif [ "$choice" = "100" ]; then
+# Download Stella ONNX model
+echo ""
+read -p "Enter quantization (int8|fp16|q4|q4f16|uint8|bnb4): " stella_quant
+stella_quant="${stella_quant:-int8}"
+download_stella_onnx "$stella_quant"
+elif [ "$choice" = "101" ]; then
+# Download Llama Nemotron Rerank
+echo ""
+read -p "Enter quantization (int8): " llama_quant
+llama_quant="${llama_quant:-int8}"
+download_llama_nemotron_onnx "$llama_quant"
+elif [ "$choice" = "102" ]; then
+# Download Jina Reranker v3
+download_jina_reranker_onnx
+elif [ "$choice" = "103" ]; then
+# Download Sparse BM42
+download_sparse_bm42
+elif [ "$choice" = "104" ]; then
+# Download all ONNX models
+download_all_onnx
+elif [ "$choice" = "105" ]; then
+# Download MiniLM-L12-v2 ONNX
+download_minilm_l12_onnx
+elif [ "$choice" = "106" ]; then
+# Download CodeRankEmbed ONNX
+download_coderankembed_onnx
+elif [ "$choice" -ge 1 ] && [ "$choice" -le "$total_models" ]; then
+# Download selected
+IFS=':' read -r model_name _ _ <<< "${ALL_MODELS[$((choice-1))]}"
+download_model "$model_name"
+echo ""
+fi
+done
     elif [ "$choice" = "88" ]; then
         # Download all models (specialized + general)
         echo -e "${BLUE}Downloading all models (specialized + general)...${NC}"
@@ -264,6 +639,49 @@ done
 echo ""
 echo -e "${GREEN}=== Download Summary ===${NC}"
 echo -e "${YELLOW}Models stored in: ${CACHE_DIR}${NC}"
+echo ""
+
+# Show ONNX models status
+echo -e "${GREEN}ONNX Models Status:${NC}"
+onnx_base_dir="${CACHE_DIR}"
+
+# Stella
+stella_dir="${onnx_base_dir}/stella_en_400M_v5"
+if [ -d "$stella_dir" ]; then
+echo -e " ${BLUE}Stella:${NC} Found"
+for quant_dir in "$stella_dir"/*/; do
+if [ -d "$quant_dir" ] && [ -f "${quant_dir}model.onnx" ]; then
+size=$(du -h "${quant_dir}model.onnx" | cut -f1)
+echo -e "   ${GREEN}✓ $(basename $quant_dir)${NC} ($size)"
+fi
+done
+fi
+
+# Llama Nemotron
+llama_dir="${onnx_base_dir}/llama-nemotron-rerank-1b-v2-ONNX"
+if [ -d "$llama_dir" ]; then
+echo -e " ${BLUE}Llama Nemotron Rerank:${NC} Found"
+for quant_dir in "$llama_dir"/*/; do
+if [ -d "$quant_dir" ] && [ -f "${quant_dir}model.onnx" ]; then
+size=$(du -h "${quant_dir}model.onnx" | cut -f1)
+echo -e "   ${GREEN}✓ $(basename $quant_dir)${NC} ($size)"
+fi
+done
+fi
+
+# Jina Reranker
+jina_dir="${onnx_base_dir}/jina-reranker-v3-onnx-int8-NG"
+if [ -d "$jina_dir" ] && [ -f "$jina_dir/model.onnx" ]; then
+size=$(du -h "$jina_dir/model.onnx" | cut -f1)
+echo -e " ${BLUE}Jina Reranker v3:${NC} ${GREEN}✓${NC} ($size)"
+fi
+
+# Sparse BM42
+sparse_dir="${onnx_base_dir}/qdrant_all_miniLM_L6_v2_with_attentions"
+if [ -d "$sparse_dir" ]; then
+echo -e " ${BLUE}Sparse BM42:${NC} ${GREEN}✓${NC}"
+fi
+
 echo ""
 
 # List all downloaded models

@@ -231,6 +231,68 @@ GITHUB_REPO_NAME=your-repo
 
 ## 🛠️ Configuration
 
+### GitHub Tool Optionality (v0.3.5)
+
+GitHub MCP tools are **optional** and disabled by default to minimize memory footprint and startup time.
+
+#### Enabling GitHub Tools
+
+**Method 1: Environment Variable**
+```bash
+export GITHUB_ENABLED=true
+```
+
+**Method 2: Server Configuration**
+In `config/server_config.json`, set:
+```json
+{
+  "github_enabled": true
+}
+```
+
+**Method 3: Claude Code Configuration**
+In your MCP server configuration, add:
+```json
+{
+  "env": {
+    "GITHUB_ENABLED": "true"
+  }
+}
+```
+
+#### Disabling GitHub Tools
+
+To disable GitHub tools when they're currently enabled:
+
+```bash
+export GITHUB_ENABLED=false
+```
+
+Or set in `config/server_config.json`:
+```json
+{
+  "github_enabled": false
+}
+```
+
+#### Why Disabled by Default?
+
+- **Minimal Footprint**: Reduces memory usage and startup time when GitHub integration is not needed
+- **Optional Feature**: Not all users need GitHub functionality
+- **Backward Compatible**: When `GITHUB_ENABLED` is not specified, GitHub tools are available if credentials exist
+
+#### When to Enable
+
+- You actively use GitHub issue management
+- You need GitHub Projects V2 integration
+- You want RAG-powered issue analysis and fix generation
+
+#### When to Keep Disabled
+
+- You only use local RAG features
+- You don't have GitHub credentials configured
+- You want minimal resource usage
+
 ### Server Configuration
 
 The GitHub integration can be configured via `config/server_config.json`:

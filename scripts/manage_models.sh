@@ -24,50 +24,142 @@ fi
 
 # Function to get model name from directory
 get_model_name() {
-    local dir_name=$1
-    case "$dir_name" in
-        # General purpose models
-        "models--sentence-transformers--all-MiniLM-L6-v2")
-            echo "sentence-transformers/all-MiniLM-L6-v2" ;;
-        "models--sentence-transformers--all-MiniLM-L12-v2")
-            echo "sentence-transformers/all-MiniLM-L12-v2" ;;
-        "models--sentence-transformers--all-mpnet-base-v2")
-            echo "sentence-transformers/all-mpnet-base-v2" ;;
-        "models--sentence-transformers--all-distilroberta-v1")
-            echo "sentence-transformers/all-distilroberta-v1" ;;
-        "models--sentence-transformers--multi-qa-MiniLM-L6-cos-v1")
-            echo "sentence-transformers/multi-qa-MiniLM-L6-cos-v1" ;;
-        
-        # Specialized embeddings models (Phase 2)
-        "models--nomic-ai--CodeRankEmbed")
-            echo "nomic-ai/CodeRankEmbed" ;;
-        "models--jinaai--jina-embeddings-v3")
-            echo "jinaai/jina-embeddings-v3" ;;
-        "models--jinaai--jina-embeddings-v2-base-en")
-            echo "jinaai/jina-embeddings-v2-base-en" ;;
-        "models--hkunlp--instructor-large")
-            echo "hkunlp/instructor-large" ;;
-        
-        # Code models
-        "models--microsoft--codebert-base")
-            echo "microsoft/codebert-base" ;;
-        "models--microsoft--unixcoder-base")
-            echo "microsoft/unixcoder-base" ;;
-        "models--Salesforce--codet5-small")
-            echo "Salesforce/codet5-small" ;;
-        
-        # Large models
-        "models--intfloat--e5-large-v2")
-            echo "intfloat/e5-large-v2" ;;
-        "models--BAAI--bge-large-en-v1.5")
-            echo "BAAI/bge-large-en-v1.5" ;;
-        
-        # Default: try to derive from directory name
-        *)
-            local model="${dir_name#models--}"
-            echo "${model//--//}"
-            ;;
-    esac
+local dir_name=$1
+case "$dir_name" in
+# General purpose models
+"models--sentence-transformers--all-MiniLM-L6-v2")
+echo "sentence-transformers/all-MiniLM-L6-v2" ;;
+"models--sentence-transformers--all-MiniLM-L12-v2")
+echo "sentence-transformers/all-MiniLM-L12-v2" ;;
+"models--sentence-transformers--all-mpnet-base-v2")
+echo "sentence-transformers/all-mpnet-base-v2" ;;
+"models--sentence-transformers--all-distilroberta-v1")
+echo "sentence-transformers/all-distilroberta-v1" ;;
+"models--sentence-transformers--multi-qa-MiniLM-L6-cos-v1")
+echo "sentence-transformers/multi-qa-MiniLM-L6-cos-v1" ;;
+
+# Specialized embeddings models (Phase 2)
+"models--nomic-ai--CodeRankEmbed")
+echo "nomic-ai/CodeRankEmbed" ;;
+"models--jinaai--jina-embeddings-v3")
+echo "jinaai/jina-embeddings-v3" ;;
+"models--jinaai--jina-embeddings-v2-base-en")
+echo "jinaai/jina-embeddings-v2-base-en" ;;
+"models--hkunlp--instructor-large")
+echo "hkunlp/instructor-large" ;;
+
+# Code models
+"models--microsoft--codebert-base")
+echo "microsoft/codebert-base" ;;
+"models--microsoft--unixcoder-base")
+echo "microsoft/unixcoder-base" ;;
+"models--Salesforce--codet5-small")
+echo "Salesforce/codet5-small" ;;
+
+# Large models
+"models--intfloat--e5-large-v2")
+echo "intfloat/e5-large-v2" ;;
+"models--BAAI--bge-large-en-v1.5")
+echo "BAAI/bge-large-en-v1.5" ;;
+
+# Default: try to derive from directory name
+*)
+local model="${dir_name#models--}"
+echo "${model//--//}"
+;;
+esac
+}
+
+# Function to list ONNX models
+list_onnx_models() {
+local onnx_base_dir="$CACHE_DIR"
+echo -e "${GREEN}ONNX Models:${NC}"
+
+# Check for Stella model
+local stella_dir="$onnx_base_dir/stella_en_400M_v5"
+if [ -d "$stella_dir" ]; then
+echo -e " ${BLUE}Stella (NovaSearch/stella_en_400M_v5):${NC}"
+
+for quant_dir in "$stella_dir"/*/; do
+if [ -d "$quant_dir" ]; then
+quant_name=$(basename "$quant_dir")
+if [ -f "${quant_dir}model.onnx" ]; then
+size=$(du -h "${quant_dir}model.onnx" | cut -f1)
+echo -e "   ${GREEN}✓ $quant_name${NC} ($size)"
+else
+echo -e "   ${YELLOW} $quant_name (incomplete)${NC}"
+fi
+fi
+done
+else
+echo -e "  ${YELLOW}Stella ONNX not downloaded${NC}"
+fi
+
+# Check for Llama Nemotron Rerank
+local llama_dir="$onnx_base_dir/llama-nemotron-rerank-1b-v2-ONNX"
+if [ -d "$llama_dir" ]; then
+echo -e " ${BLUE}Llama Nemotron Rerank (cstr/llama-nemotron-rerank-1b-v2-ONNX):${NC}"
+for quant_dir in "$llama_dir"/*/; do
+if [ -d "$quant_dir" ]; then
+quant_name=$(basename "$quant_dir")
+if [ -f "${quant_dir}model.onnx" ]; then
+size=$(du -h "${quant_dir}model.onnx" | cut -f1)
+echo -e "   ${GREEN}✓ $quant_name${NC} ($size)"
+fi
+fi
+done
+else
+echo -e "  ${YELLOW}Llama Nemotron Rerank not downloaded${NC}"
+fi
+
+# Check for Jina Reranker v3
+local jina_dir="$onnx_base_dir/jina-reranker-v3-onnx-int8-NG"
+if [ -d "$jina_dir" ]; then
+echo -e " ${BLUE}Jina Reranker v3 (keisuke-miyako/jina-reranker-v3-onnx-int8-NG):${NC}"
+if [ -f "$jina_dir/model.onnx" ]; then
+size=$(du -h "$jina_dir/model.onnx" | cut -f1)
+echo -e "   ${GREEN}✓ int8${NC} ($size)"
+fi
+else
+echo -e "  ${YELLOW}Jina Reranker v3 not downloaded${NC}"
+fi
+
+# Check for Sparse BM42
+local sparse_dir="$onnx_base_dir/qdrant_all_miniLM_L6_v2_with_attentions"
+if [ -d "$sparse_dir" ]; then
+echo -e " ${BLUE}Sparse BM42 (Qdrant/all_miniLM_L6_v2_with_attentions):${NC}"
+echo -e " ${GREEN}✓ default${NC}"
+else
+echo -e " ${YELLOW}Sparse BM42 not downloaded${NC}"
+fi
+
+# MiniLM-L12-v2 ONNX
+local minilm_dir="$onnx_base_dir/all-MiniLM-L12-v2-onnx-fp16"
+if [ -d "$minilm_dir" ]; then
+if [ -f "$minilm_dir/model.onnx" ]; then
+size=$(du -h "$minilm_dir/model.onnx" | cut -f1)
+echo -e " ${BLUE}MiniLM-L12-v2 ONNX (keisuke-miyako/all-MiniLM-L12-v2-onnx-fp16):${NC} ${GREEN}✓${NC} ($size)"
+else
+echo -e " ${BLUE}MiniLM-L12-v2 ONNX:${NC} ${GREEN}✓${NC}"
+fi
+else
+echo -e "  ${YELLOW}MiniLM-L12-v2 ONNX not downloaded${NC}"
+fi
+
+# CodeRankEmbed ONNX
+local coderank_dir="$onnx_base_dir/CodeRankEmbed-onnx-int8"
+if [ -d "$coderank_dir" ]; then
+if [ -f "$coderank_dir/model.onnx" ]; then
+size=$(du -h "$coderank_dir/model.onnx" | cut -f1)
+echo -e " ${BLUE}CodeRankEmbed ONNX (mrsladoje/CodeRankEmbed-onnx-int8):${NC} ${GREEN}✓${NC} ($size)"
+else
+echo -e " ${BLUE}CodeRankEmbed ONNX:${NC} ${GREEN}✓${NC}"
+fi
+else
+echo -e "  ${YELLOW}CodeRankEmbed ONNX not downloaded${NC}"
+fi
+
+echo ""
 }
 
 usage() {
@@ -80,67 +172,70 @@ usage() {
 }
 
 list_models() {
-    echo -e "${BLUE}=== Downloaded Models ===${NC}"
-    echo -e "${YELLOW}Cache directory: ${CACHE_DIR}${NC}"
-    echo ""
-    
-    if [ ! -d "$CACHE_DIR" ]; then
-        echo -e "${RED}Cache directory does not exist!${NC}"
-        echo "Run './scripts/download_models.sh' to download models"
-        exit 1
-    fi
-    
-    # Load specialized embeddings config
-    if [ -f .env ]; then
-        source <(grep -v '^#' .env | grep -v '^$')
-    fi
-    
-    echo -e "${GREEN}Specialized Embeddings Configuration:${NC}"
-    echo -e "  Code: ${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}"
-    echo -e "  Config: ${QDRANT_CONFIG_EMBEDDING_MODEL:-jinaai/jina-embeddings-v3}"
-    echo -e "  Documentation: ${QDRANT_DOC_EMBEDDING_MODEL:-hkunlp/instructor-large}"
-    echo -e "  General: ${QDRANT_GENERAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
-    echo ""
-    
-    echo "Downloaded models:"
-    i=1
-    declare -a available_models=()
-    
-    for dir in "$CACHE_DIR"/models--*; do
-        if [ -d "$dir" ]; then
-            dir_name=$(basename "$dir")
-            
-            # Get model name using the function
-            model_name=$(get_model_name "$dir_name")
-            
-            size=$(du -sh "$dir" | cut -f1)
-            
-            # Check if this is a configured specialized model
-            role=""
-            if [[ "$model_name" == "${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}" ]]; then
-                role=" ${BLUE}[CODE]${NC}"
-            elif [[ "$model_name" == "${QDRANT_CONFIG_EMBEDDING_MODEL:-jinaai/jina-embeddings-v3}" ]]; then
-                role=" ${BLUE}[CONFIG]${NC}"
-            elif [[ "$model_name" == "${QDRANT_DOC_EMBEDDING_MODEL:-hkunlp/instructor-large}" ]]; then
-                role=" ${BLUE}[DOCS]${NC}"
-            elif [[ "$model_name" == "${QDRANT_GENERAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}" ]]; then
-                role=" ${BLUE}[GENERAL]${NC}"
-            fi
-            
-            echo -e "  ${GREEN}$i.${NC} $model_name ($size)$role"
-            available_models+=("$model_name")
-            ((i++))
-        fi
-    done
-    
-    if [ ${#available_models[@]} -eq 0 ]; then
-        echo -e "${YELLOW}No models found in cache${NC}"
-        echo "Run './scripts/download_models.sh' to download models"
-    else
-        echo ""
-        total_size=$(du -sh "$CACHE_DIR" | cut -f1)
-        echo -e "${BLUE}Total disk usage: ${total_size}${NC}"
-    fi
+echo -e "${BLUE}=== Downloaded Models ===${NC}"
+echo -e "${YELLOW}Cache directory: ${CACHE_DIR}${NC}"
+echo ""
+
+if [ ! -d "$CACHE_DIR" ]; then
+echo -e "${RED}Cache directory does not exist!${NC}"
+echo "Run './scripts/download_models.sh' to download models"
+exit 1
+fi
+
+# Load specialized embeddings config
+if [ -f .env ]; then
+source <(grep -v '^#' .env | grep -v '^$')
+fi
+
+echo -e "${GREEN}Specialized Embeddings Configuration:${NC}"
+echo -e " Code: ${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}"
+echo -e " Config: ${QDRANT_CONFIG_EMBEDDING_MODEL:-jinaai/jina-embeddings-v3}"
+echo -e " Documentation: ${QDRANT_DOC_EMBEDDING_MODEL:-hkunlp/instructor-large}"
+echo -e " General: ${QDRANT_GENERAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}"
+echo ""
+
+# Show ONNX models
+list_onnx_models
+
+echo "Downloaded models:"
+i=1
+declare -a available_models=()
+
+for dir in "$CACHE_DIR"/models--*; do
+if [ -d "$dir" ]; then
+dir_name=$(basename "$dir")
+
+# Get model name using the function
+model_name=$(get_model_name "$dir_name")
+
+size=$(du -sh "$dir" | cut -f1)
+
+# Check if this is a configured specialized model
+role=""
+if [[ "$model_name" == "${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}" ]]; then
+role=" ${BLUE}[CODE]${NC}"
+elif [[ "$model_name" == "${QDRANT_CONFIG_EMBEDDING_MODEL:-jinaai/jina-embeddings-v3}" ]]; then
+role=" ${BLUE}[CONFIG]${NC}"
+elif [[ "$model_name" == "${QDRANT_DOC_EMBEDDING_MODEL:-hkunlp/instructor-large}" ]]; then
+role=" ${BLUE}[DOCS]${NC}"
+elif [[ "$model_name" == "${QDRANT_GENERAL_EMBEDDING_MODEL:-sentence-transformers/all-MiniLM-L6-v2}" ]]; then
+role=" ${BLUE}[GENERAL]${NC}"
+fi
+
+echo -e " ${GREEN}$i.${NC} $model_name ($size)$role"
+available_models+=("$model_name")
+((i++))
+fi
+done
+
+if [ ${#available_models[@]} -eq 0 ]; then
+echo -e "${YELLOW}No models found in cache${NC}"
+echo "Run './scripts/download_models.sh' to download models"
+else
+echo ""
+total_size=$(du -sh "$CACHE_DIR" | cut -f1)
+echo -e "${BLUE}Total disk usage: ${total_size}${NC}"
+fi
 }
 
 debug_cache() {

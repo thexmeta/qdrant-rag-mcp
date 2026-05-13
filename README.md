@@ -22,6 +22,7 @@ A context-aware Model Context Protocol (MCP) server that provides semantic searc
 - **🔐 Flexible Authentication**: Personal Access Token and GitHub App support
 - **📊 RAG-Enhanced Analysis**: Leverage full codebase search for issue understanding
 - **🛡️ Safety-First Design**: Dry-run mode, file protection, rate limiting, and audit logging
+- **🔌 Optional Feature**: GitHub tools disabled by default via `GITHUB_ENABLED=false` for minimal footprint
 
 ### 🆕 Context Tracking (v0.3.1)
 - **👁️ Context Window Visibility**: Monitor what Claude knows in the current session
@@ -33,13 +34,21 @@ A context-aware Model Context Protocol (MCP) server that provides semantic searc
 
 ### 🆕 Specialized Embeddings (v0.3.3)
 - **🎯 Content-Type Specific Models**: Different AI models optimized for different content types
-  - **Code**: Programming-aware embeddings for 30-50% better code search relevance
-  - **Config**: Structure-aware models for precise JSON/YAML/XML navigation
-  - **Documentation**: Prose-optimized embeddings for natural documentation search
+- **Code**: Programming-aware embeddings for 30-50% better code search relevance
+- **Config**: Structure-aware models for precise JSON/YAML/XML navigation
+- **Documentation**: Prose-optimized embeddings for natural documentation search
 - **🧠 Language-Specific Understanding**: Python idioms, JavaScript patterns, and more
 - **🔥 Reduced Cross-Type Noise**: Configs don't pollute code searches and vice versa
 - **🛡️ Thread-Safe & Reliable**: Comprehensive thread safety with fallback protection
 - **🍎 Apple Silicon Optimized**: Memory management with MPS acceleration
+
+### 🆕 BM42 Sparse Embeddings (v0.3.5)
+- **🔍 Superior Keyword Matching**: BM42 sparse vector embeddings for precise term-based retrieval
+- **⚡ Fastembed Integration**: Uses Qdrant's fastembed library for efficient sparse vector generation
+- **🎯 Hybrid Search Enhancement**: Combines dense semantic search with sparse keyword matching
+- **📦 Pre-configured Models**: `Qdrant/all_miniLM_L6_v2_with_attentions` for BM42 sparse embeddings
+- **🔧 Configurable**: Enable/disable via `QDRANT_SPARSE_METHOD` and `QDRANT_SPARSE_MODEL` env vars
+- **📊 Better Precision**: Improved keyword matching over traditional BM25 approaches
 
 ### 🆕 Progressive Context Management (v0.3.2)
 - **🎯 Multi-Level Context**: File → Class → Method hierarchy for optimal token usage
@@ -114,6 +123,12 @@ claude
 # Ask: "What's my current project context?"
 ```
 
+**Installation Scripts Features** (v0.3.5):
+- **Dynamic Path Resolution**: Scripts work from any directory location
+- **Environment Variable Handling**: Automatic `.env` loading and validation
+- **Context-Aware Execution**: Detects project context automatically
+- **Cross-Platform Support**: Works on Linux, macOS, and WSL
+
 ### Optional: Enable Auto-Indexing
 
 ```bash
@@ -126,6 +141,31 @@ echo 'export QDRANT_RAG_AUTO_INDEX=true' >> ~/.bashrc
 # or for zsh users:
 echo 'export QDRANT_RAG_AUTO_INDEX=true' >> ~/.zshrc
 ```
+
+### Optional: Configure BM42 Sparse Embeddings
+
+```bash
+# Enable BM42 sparse embeddings (v0.3.5)
+export QDRANT_SPARSE_METHOD=bm42
+export QDRANT_SPARSE_MODEL=Qdrant/bm42-all-minilm-l6-v2-attentions
+
+# Add to ~/.bashrc or ~/.zshrc for persistence
+echo 'export QDRANT_SPARSE_METHOD=bm42' >> ~/.bashrc
+echo 'export QDRANT_SPARSE_MODEL=Qdrant/bm42-all-minilm-l6-v2-attentions' >> ~/.bashrc
+```
+
+### Optional: Enable GitHub Tools
+
+```bash
+# GitHub tools are disabled by default for minimal footprint
+# Enable via environment variable:
+export GITHUB_ENABLED=true
+
+# Or configure in config/server_config.json:
+# "github_enabled": true
+```
+
+**Configuration Reference**: See [`.env.test`](.env.test) for comprehensive configuration examples including BM42, GitHub optionality, and memory management settings.
 
 ## 🔧 Working Directory Configuration (Important!)
 
@@ -524,6 +564,15 @@ export QDRANT_LOG_DIR=/custom/path   # Custom log directory
 | No search results | Index first, check scope | [Troubleshooting](claude-code-troubleshooting.md) |
 
 ## 📈 Recent Improvements
+
+### 🚀 v0.3.5 (Latest) - BM42 Sparse Embeddings & GitHub Optionality
+- ✅ **BM42 Sparse Embeddings Support**: Native Qdrant BM42 via fastembed for superior keyword matching
+- ✅ **GitHub Tool Optionality**: `GITHUB_ENABLED` environment variable for optional GitHub MCP tools
+- ✅ **Installation Script Improvements**: Dynamic path resolution, enhanced environment handling
+- ✅ **Configuration Examples**: Comprehensive `.env.test` with BM42, GitHub, and memory settings
+- ✅ **Documentation Updates**: BM42 technical guide, GitHub optionality guide, setup guide updates
+- 📖 **[BM42 Technical Guide](docs/technical/bm42-sparse-embeddings.md)**: Complete BM42 configuration and troubleshooting
+- 📖 **[GitHub Integration Guide](docs/github-integration-guide.md#github-optionality)**: Enable/disable GitHub tools
 
 ### 🚀 v0.3.3 (Latest) - Specialized Embeddings & Critical Bug Fixes
 - ✅ **Content-Type Specific Models**: Different embedding models for different content types

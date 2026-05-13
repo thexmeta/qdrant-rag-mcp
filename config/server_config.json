@@ -12,13 +12,19 @@
     "grpc_port": "${QDRANT_GRPC_PORT:-6334}",
     "https": false
   },
-  "embeddings": {
-    "model": "${EMBEDDING_MODEL:-all-MiniLM-L6-v2}",
-    "cache_dir": "${SENTENCE_TRANSFORMERS_HOME:-./data/models}",
-    "device": "auto",
+"embeddings": {
+"model": "./data/models/stella_en_400M_v5/int8",
+    "device": "cpu",
     "batch_size": 32,
     "normalize_embeddings": true,
-    "show_progress_bar": true
+    "show_progress_bar": true,
+    "query_prefix": "s2p_query: ",
+    "requires_query_prefix": true
+  },
+  "sparse_embeddings": {
+    "model": "./qdrant_all_miniLM_L6_v2_with_attentions",
+    "method": "bm42",
+    "device": "cpu"
   },
   "indexing": {
     "chunk_size": 1000,
@@ -33,6 +39,8 @@
     "max_results": 5,
     "score_threshold": 0.7,
     "rerank": true,
+    "reranker_model": "./llama-nemotron-rerank-1b-v2-ONNX/int8",
+    "reranker_device": "cpu",
     "batch_size": 100,
     "enhanced_ranking": {
       "base_score_weight": 0.4,
@@ -68,7 +76,9 @@
         "bm25": 0.3
       }
     },
-    "exact_match_bonus": 0.2
+    "exact_match_bonus": 0.2,
+    "sparse_method": "${QDRANT_SPARSE_METHOD:-bm42}",
+    "sparse_model": "${QDRANT_SPARSE_MODEL:-Qdrant/bm42-all-minilm-l6-v2-attentions}"
   },
   "collections": {
     "code": "code_collection",
@@ -107,20 +117,11 @@
         "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         "sentence-transformers/distiluse-base-multilingual-cased-v2"
       ],
-      "large": [
-        "intfloat/e5-large-v2",
-        "BAAI/bge-large-en-v1.5"
-      ]
+      "large": ["intfloat/e5-large-v2", "BAAI/bge-large-en-v1.5"]
     }
   },
   "documentation": {
-    "supported_extensions": [
-      ".md",
-      ".markdown",
-      ".rst",
-      ".txt",
-      ".mdx"
-    ],
+    "supported_extensions": [".md", ".markdown", ".rst", ".txt", ".mdx"],
     "features": {
       "extract_headings": true,
       "extract_code_blocks": true,
@@ -137,6 +138,7 @@
     }
   },
   "github": {
+    "enabled": "${GITHUB_ENABLED:-false}",
     "authentication": {
       "token": "${GITHUB_TOKEN:-}",
       "app_id": "${GITHUB_APP_ID:-}",
@@ -190,7 +192,7 @@
       "auto_assign_author": true,
       "template": {
         "title_prefix": "[Auto] ",
-        "body_template": "## Summary\n{summary}\n\n## Changes\n{changes}\n\n## Related Issue\nFixes #{issue_number}\n\n---\n🤖 Generated automatically via RAG analysis"
+        "body_template": "## Summary\n{summary}\n\n## Changes\n{changes}\n\n## Related Issue\nFixes #{issue_number}\n\n---\n\ud83e\udd16 Generated automatically via RAG analysis"
       }
     },
     "safety": {
@@ -327,7 +329,7 @@
     },
     "performance": {
       "batch_size": "${QDRANT_EMBEDDING_BATCH_SIZE:-32}",
-      "device": "${QDRANT_EMBEDDING_DEVICE:-auto}",
+      "device": "${QDRANT_EMBEDDING_DEVICE:-cpu}",
       "normalize_embeddings": true,
       "show_progress_bar": false
     }

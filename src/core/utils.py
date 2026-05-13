@@ -13,9 +13,9 @@ from typing import Any, Dict, List, Optional, Union, Callable
 from contextlib import contextmanager
 from functools import lru_cache
 
-from ..utils.logging_config import get_logger
-from ..utils.memory_manager import get_memory_manager, UnifiedMemoryManager
-from ..utils.specialized_embeddings import SpecializedEmbeddingManager
+from utils.logging import get_project_logger as get_logger
+from utils.memory_manager import get_memory_manager, UnifiedMemoryManager
+from utils.specialized_embeddings import SpecializedEmbeddingManager
 
 
 # Project markers for determining project boundaries

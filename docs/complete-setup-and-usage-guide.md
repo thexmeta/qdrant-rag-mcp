@@ -277,13 +277,20 @@ Key configuration in your `.env` file:
 
 ```bash
 # Embedding Model Configuration
-EMBEDDING_MODEL=all-MiniLM-L12-v2  # or all-MiniLM-L6-v2 for faster performance
+EMBEDDING_MODEL=all-MiniLM-L12-v2 # or all-MiniLM-L6-v2 for faster performance
 TOKENIZERS_PARALLELISM=false
-MPS_DEVICE_ENABLE=1  # Enable MPS on Apple Silicon
+MPS_DEVICE_ENABLE=1 # Enable MPS on Apple Silicon
+
+# BM42 Sparse Embeddings Configuration (v0.3.5)
+QDRANT_SPARSE_METHOD=bm42
+QDRANT_SPARSE_MODEL=Qdrant/bm42-all-minilm-l6-v2-attentions
+
+# GitHub Tools Optionality (v0.3.5)
+GITHUB_ENABLED=false  # Disabled by default for minimal footprint
 
 # Server Configuration
-SERVER_PORT=8080  # Port for HTTP test server (not used by MCP)
-QDRANT_HOST=localhost  # or 'qdrant' in Docker mode
+SERVER_PORT=8080 # Port for HTTP test server (not used by MCP)
+QDRANT_HOST=localhost # or 'qdrant' in Docker mode
 QDRANT_PORT=6333
 
 # Model Cache
@@ -351,6 +358,40 @@ curl -X DELETE http://localhost:6333/collections/documentation_collection
 | `all-MiniLM-L12-v2` | ~120MB | 384 | Better quality, slightly slower |
 | `all-mpnet-base-v2` | ~400MB | 768 | High quality, slower |
 | `microsoft/codebert-base` | ~450MB | 768 | Optimized for code (experimental) |
+
+### BM42 Sparse Embeddings Configuration (v0.3.5)
+
+BM42 provides superior keyword matching using sparse vector embeddings combined with dense semantic search.
+
+#### Enabling BM42
+
+```bash
+# In your .env file or environment
+QDRANT_SPARSE_METHOD=bm42
+QDRANT_SPARSE_MODEL=Qdrant/bm42-all-minilm-l6-v2-attentions
+```
+
+#### How BM42 Works
+
+1. **Sparse Vectors**: Creates term-frequency based sparse embeddings
+2. **Hybrid Search**: Combines dense (semantic) + sparse (keyword) matching
+3. **Fastembed Integration**: Uses Qdrant's fastembed library for efficient processing
+4. **Better Precision**: Improved keyword matching over traditional BM25
+
+#### BM42 Configuration Options
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QDRANT_SPARSE_METHOD` | `bm42` | Sparse embedding method (bm42 or bm25) |
+| `QDRANT_SPARSE_MODEL` | `Qdrant/bm42-all-minilm-l6-v2-attentions` | Model for sparse embeddings |
+
+#### Troubleshooting BM42
+
+**Issue**: BM42 not working
+- **Solution**: Ensure fastembed is installed: `uv pip install fastembed`
+
+**Issue**: Sparse collection not found
+- **Solution**: Reindex after enabling BM42 configuration
 
 ### Docker vs Local Mode
 
