@@ -12,8 +12,8 @@
     "grpc_port": "${QDRANT_GRPC_PORT:-6334}",
     "https": false
   },
-"embeddings": {
-"model": "./data/models/stella_en_400M_v5/int8",
+  "embeddings": {
+    "model": "./data/models/stella_en_400M_v5/int8",
     "device": "cpu",
     "batch_size": 32,
     "normalize_embeddings": true,
@@ -22,7 +22,7 @@
     "requires_query_prefix": true
   },
   "sparse_embeddings": {
-    "model": "./qdrant_all_miniLM_L6_v2_with_attentions",
+    "model": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
     "method": "bm42",
     "device": "cpu"
   },
@@ -39,7 +39,7 @@
     "max_results": 5,
     "score_threshold": 0.7,
     "rerank": true,
-    "reranker_model": "./llama-nemotron-rerank-1b-v2-ONNX/int8",
+    "reranker_model": "./data/models/llama-nemotron-rerank-1b-v2-ONNX/int8",
     "reranker_device": "cpu",
     "batch_size": 100,
     "enhanced_ranking": {
@@ -290,7 +290,7 @@
     }
   },
   "specialized_embeddings": {
-    "enabled": "${QDRANT_SPECIALIZED_EMBEDDINGS_ENABLED:-true}",
+    "enabled": "${QDRANT_SPECIALIZED_EMBEDDINGS_ENABLED:-false}",
     "models": {
       "code": {
         "primary": "${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}",

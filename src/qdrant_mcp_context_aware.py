@@ -671,7 +671,7 @@ def ensure_collection(
 
             # Use provided values if specified, otherwise use detected values
             final_model_name = embedding_model_name or actual_model_name
-                        final_dimension = embedding_dimension or actual_dimension
+            final_dimension = embedding_dimension or actual_dimension
 
             # Create collection with vectors config
             config = get_config()
