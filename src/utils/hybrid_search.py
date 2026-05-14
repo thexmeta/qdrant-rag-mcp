@@ -6,6 +6,7 @@ traditional BM25 keyword-based search with semantic vector search for
 improved retrieval precision.
 """
 
+import os
 import logging
 from typing import List, Dict, Any, Optional, Tuple
 from dataclasses import dataclass
@@ -36,6 +37,15 @@ try:
     PIPELINE_AVAILABLE = True
 except ImportError:
     PIPELINE_AVAILABLE = False
+
+# Import ONNX support
+try:
+    from .onnx_embeddings import ONNXRerankerManager, ONNX_RUNTIME_AVAILABLE
+except ImportError:
+    try:
+        from onnx_embeddings import ONNXRerankerManager, ONNX_RUNTIME_AVAILABLE
+    except ImportError:
+        ONNX_RUNTIME_AVAILABLE = False
 
 
 def code_preprocessor(text: str) -> str:
@@ -348,6 +358,20 @@ class HybridSearcher:
         # Override with config if available
         if "hybrid_search" in config and "weights" in config["hybrid_search"]:
             self.default_weights.update(config["hybrid_search"]["weights"])
+            
+        # Initialize reranker if configured
+        self.onnx_reranker = None
+        reranker_model = config.get("search.reranker_model") or config.get("search", {}).get("reranker_model")
+        
+        if reranker_model:
+            is_local_path = os.path.isdir(reranker_model)
+            if is_local_path and ONNX_RUNTIME_AVAILABLE:
+                logger.info(f"Initializing ONNX reranker from: {reranker_model}")
+                self.onnx_reranker = ONNXRerankerManager(model_path=reranker_model)
+            else:
+                logger.info("Reranker model configured but no local ONNX support implemented yet for non-local paths")
+        
+        logger.info(f"Hybrid searcher initialized with weights: {self.default_weights}")
         
     def reciprocal_rank_fusion(
         self,
@@ -609,12 +633,12 @@ class HybridSearcher:
         
         # Create appropriate pipeline based on search type
         if search_type == "code":
-            pipeline = create_code_search_pipeline(enhanced_ranker)
+            pipeline = create_code_search_pipeline(enhanced_ranker, onnx_reranker=self.onnx_reranker)
         elif search_type == "documentation":
-            pipeline = create_documentation_pipeline(enhanced_ranker)
+            pipeline = create_documentation_pipeline(enhanced_ranker, onnx_reranker=self.onnx_reranker)
         else:
             v_weight, b_weight = self.get_weights_for_search_type(search_type)
-            pipeline = create_hybrid_pipeline(v_weight, b_weight, enhanced_ranker=enhanced_ranker)
+            pipeline = create_hybrid_pipeline(v_weight, b_weight, enhanced_ranker=enhanced_ranker, onnx_reranker=self.onnx_reranker)
         
         # Run pipeline
         return pipeline.score(query, documents, context)

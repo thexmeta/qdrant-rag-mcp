@@ -19,7 +19,8 @@
     "normalize_embeddings": true,
     "show_progress_bar": true,
     "query_prefix": "s2p_query: ",
-    "requires_query_prefix": true
+    "requires_query_prefix": true,
+    "backend": "fastembed"
   },
   "sparse_embeddings": {
     "model": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
@@ -290,7 +291,7 @@
     }
   },
   "specialized_embeddings": {
-    "enabled": "${QDRANT_SPECIALIZED_EMBEDDINGS_ENABLED:-false}",
+    "enabled": false,
     "models": {
       "code": {
         "primary": "${QDRANT_CODE_EMBEDDING_MODEL:-nomic-ai/CodeRankEmbed}",
@@ -321,7 +322,8 @@
         "fallback": null,
         "dimension": 384,
         "max_tokens": 256,
-        "description": "General purpose embeddings and backward compatibility"
+        "description": "General purpose embeddings and backward compatibility",
+        "backend": "fastembed"
       }
     },
     "memory": {

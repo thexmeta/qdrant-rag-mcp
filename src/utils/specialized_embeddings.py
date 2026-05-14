@@ -16,6 +16,12 @@ import torch
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+# Import custom ONNX support
+try:
+    from .onnx_embeddings import ONNXRuntimeManager, ONNX_RUNTIME_AVAILABLE, FASTEMBED_AVAILABLE, TextEmbedding
+except ImportError:
+    from onnx_embeddings import ONNXRuntimeManager, ONNX_RUNTIME_AVAILABLE, FASTEMBED_AVAILABLE, TextEmbedding
+
 from .logging import get_project_logger
 from .memory_manager import MemoryComponent, get_memory_manager
 
@@ -126,7 +132,10 @@ class SpecializedEmbeddingManager(MemoryComponent):
             self.cache_dir = os.path.expanduser(os.getenv('QDRANT_MODEL_CACHE_DIR'))
         
         # LRU cache for loaded models
-        self.loaded_models: OrderedDict[str, SentenceTransformer] = OrderedDict()
+        self.loaded_models: OrderedDict[str, Any] = OrderedDict()
+        
+        # Backend tracking for each loaded model
+        self.model_backends: Dict[str, str] = {}
         
         # Memory tracking
         self.memory_usage: Dict[str, float] = {}
@@ -340,6 +349,10 @@ class SpecializedEmbeddingManager(MemoryComponent):
                 self.total_memory_used_gb -= self.memory_usage[lru_model_name]
                 del self.memory_usage[lru_model_name]
             
+            # Clear backend tracking
+            if lru_model_name in self.model_backends:
+                del self.model_backends[lru_model_name]
+            
             # Clean up
             del lru_model
         
@@ -358,7 +371,7 @@ class SpecializedEmbeddingManager(MemoryComponent):
         logger.info(f"Evicted model {lru_model_name} from memory. "
                    f"Current memory usage: {self.total_memory_used_gb:.1f}GB")
     
-    def load_model(self, content_type: str) -> Tuple[SentenceTransformer, Dict[str, Any]]:
+    def load_model(self, content_type: str) -> Tuple[Any, Dict[str, Any]]:
         """
         Load a model for the specified content type with LRU eviction
         
@@ -410,7 +423,28 @@ class SpecializedEmbeddingManager(MemoryComponent):
                 os.environ['HF_HUB_CACHE'] = str(Path(self.cache_dir).resolve())
             
             # Load model with MPS optimization if applicable
-            model = self._load_model_with_mps_optimization(model_name, content_type)
+            backend = model_config.get('backend', os.getenv('QDRANT_EMBEDDINGS_BACKEND', 'sentence-transformers'))
+            
+            # Auto-detect if it's a local path
+            is_local_path = os.path.isdir(model_name)
+            
+            if (backend == 'onnxruntime' or (backend == 'fastembed' and is_local_path)) and ONNX_RUNTIME_AVAILABLE:
+                logger.info(f"Loading {model_name} using ONNXRuntime (Custom)")
+                model = ONNXRuntimeManager(
+                    model_path=model_name
+                )
+                self.model_backends[model_name] = 'onnxruntime'
+            elif backend == 'fastembed' and FASTEMBED_AVAILABLE:
+                logger.info(f"Loading {model_name} using FastEmbed (ONNX)")
+                model = TextEmbedding(
+                    model_name=model_name,
+                    cache_dir=self.cache_dir
+                )
+                self.model_backends[model_name] = 'fastembed'
+            else:
+                logger.info(f"Loading {model_name} using SentenceTransformer")
+                model = self._load_model_with_mps_optimization(model_name, content_type)
+                self.model_backends[model_name] = 'sentence-transformers'
             
             # Thread-safe caching
             with self._lock:
@@ -741,15 +775,22 @@ class SpecializedEmbeddingManager(MemoryComponent):
                         convert_to_tensor=False
                     )
             else:
-                # Regular encoding for other models
-                embeddings = model.encode(
-                    truncated_texts,
-                    batch_size=batch_size,
-                    show_progress_bar=show_progress_bar,
-                    normalize_embeddings=normalize_embeddings,
-                    convert_to_numpy=True,
-                    convert_to_tensor=False  # Ensure numpy output
-                )
+                # Check backend for encoding
+                backend = self.model_backends.get(model_name, 'sentence-transformers')
+                
+                if backend == 'fastembed':
+                    # fastembed.embed returns a generator
+                    embeddings = list(model.embed(truncated_texts))
+                else:
+                    # Regular encoding for other models
+                    embeddings = model.encode(
+                        truncated_texts,
+                        batch_size=batch_size,
+                        show_progress_bar=show_progress_bar,
+                        normalize_embeddings=normalize_embeddings,
+                        convert_to_numpy=True,
+                        convert_to_tensor=False  # Ensure numpy output
+                    )
             
             # Ensure correct data type (Qdrant expects float32)
             embeddings = np.array(embeddings, dtype=np.float32)

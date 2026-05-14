@@ -223,6 +223,52 @@ class EnhancedRankingStage(ScoringStage):
         return results
 
 
+class ONNXRerankStage(ScoringStage):
+    """Stage that applies ML-based reranking using an ONNX cross-encoder"""
+    
+    def __init__(self, reranker=None, top_k: int = 10):
+        super().__init__("onnx_rerank", 1.0)
+        self.reranker = reranker
+        self.top_k = top_k
+        
+    def score(self, query: str, documents: List[Dict[str, Any]], context: Dict[str, Any]) -> List[ScoringResult]:
+        """Apply ML reranking to documents"""
+        if not self.reranker or not documents:
+            # Pass through existing scores if no reranker
+            return [
+                ScoringResult(
+                    doc_id=doc.get("id", f"{doc.get('file_path', '')}_{doc.get('chunk_index', 0)}"),
+                    stage_name=self.name,
+                    score=doc.get("score", 0.0)
+                )
+                for doc in documents
+            ]
+            
+        # Get content from documents
+        doc_contents = [doc.get("content", "") for doc in documents]
+        
+        # Run reranker
+        ranked_results = self.reranker.rerank(query, doc_contents, top_k=self.top_k)
+        
+        # Build results map
+        scores_map = {idx: score for idx, score in ranked_results}
+        
+        results = []
+        for i, doc in enumerate(documents):
+            # Use rerank score if available, otherwise 0 or base score
+            # Usually we only rerank top N, so others get low score
+            score = scores_map.get(i, -10.0) # Low score for non-ranked docs
+            
+            results.append(ScoringResult(
+                doc_id=doc.get("id", f"{doc.get('file_path', '')}_{doc.get('chunk_index', 0)}"),
+                stage_name=self.name,
+                score=score,
+                metadata={"rerank_rank": next((r for r, (idx, _) in enumerate(ranked_results) if idx == i), None)}
+            ))
+            
+        return results
+
+
 class ScoringPipeline:
     """
     Configurable pipeline for document scoring.
@@ -343,7 +389,8 @@ class ScoringPipeline:
 # Factory functions for common pipeline configurations
 
 def create_hybrid_pipeline(vector_weight: float = 0.7, bm25_weight: float = 0.3, 
-                          exact_match_bonus: float = 0.2, enhanced_ranker=None) -> ScoringPipeline:
+                          exact_match_bonus: float = 0.2, enhanced_ranker=None,
+                          onnx_reranker=None) -> ScoringPipeline:
     """Create a standard hybrid search scoring pipeline"""
     stages = [
         VectorScoringStage(weight=vector_weight),
@@ -354,11 +401,14 @@ def create_hybrid_pipeline(vector_weight: float = 0.7, bm25_weight: float = 0.3,
     
     if enhanced_ranker:
         stages.append(EnhancedRankingStage(ranker=enhanced_ranker))
+        
+    if onnx_reranker:
+        stages.append(ONNXRerankStage(reranker=onnx_reranker))
     
     return ScoringPipeline(stages)
 
 
-def create_code_search_pipeline(enhanced_ranker=None) -> ScoringPipeline:
+def create_code_search_pipeline(enhanced_ranker=None, onnx_reranker=None) -> ScoringPipeline:
     """Create a pipeline optimized for code search"""
     stages = [
         VectorScoringStage(weight=0.5),
@@ -369,11 +419,14 @@ def create_code_search_pipeline(enhanced_ranker=None) -> ScoringPipeline:
     
     if enhanced_ranker:
         stages.append(EnhancedRankingStage(ranker=enhanced_ranker))
+        
+    if onnx_reranker:
+        stages.append(ONNXRerankStage(reranker=onnx_reranker))
     
     return ScoringPipeline(stages, config={"debug": False})
 
 
-def create_documentation_pipeline(enhanced_ranker=None) -> ScoringPipeline:
+def create_documentation_pipeline(enhanced_ranker=None, onnx_reranker=None) -> ScoringPipeline:
     """Create a pipeline optimized for documentation search"""
     stages = [
         VectorScoringStage(weight=0.8),
@@ -384,5 +437,8 @@ def create_documentation_pipeline(enhanced_ranker=None) -> ScoringPipeline:
     
     if enhanced_ranker:
         stages.append(EnhancedRankingStage(ranker=enhanced_ranker))
+        
+    if onnx_reranker:
+        stages.append(ONNXRerankStage(reranker=onnx_reranker))
     
     return ScoringPipeline(stages)

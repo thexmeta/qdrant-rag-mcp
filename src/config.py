@@ -47,6 +47,7 @@ class Config:
                 "batch_size": 32,
                 "normalize_embeddings": True,
                 "show_progress_bar": True,
+                "backend": "sentence-transformers",  # Default backend
             },
             "indexing": {
                 "chunk_size": 2000,
@@ -146,6 +147,7 @@ class Config:
             "qdrant.port": "QDRANT_PORT",
             "qdrant.api_key": "QDRANT_API_KEY",
             "embeddings.model": "EMBEDDING_MODEL",
+            "embeddings.backend": "QDRANT_EMBEDDINGS_BACKEND",
             "embeddings.cache_dir": "SENTENCE_TRANSFORMERS_HOME",
             "embeddings.batch_size": "EMBEDDING_BATCH_SIZE",
         }
