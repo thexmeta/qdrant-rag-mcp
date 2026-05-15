@@ -14,7 +14,7 @@ from collections import defaultdict
 from langchain_community.retrievers import BM25Retriever
 from langchain.schema import Document
 from qdrant_client import QdrantClient
-from qdrant_client.models import PointStruct
+from qdrant_client.models import PointStruct, SparseVector
 import re
 from typing import Callable
 
@@ -642,6 +642,65 @@ class HybridSearcher:
         
         # Run pipeline
         return pipeline.score(query, documents, context)
+
+    def sparse_search_qdrant(
+        self, 
+        qdrant_client, 
+        collection_name: str, 
+        query: str, 
+        sparse_manager, 
+        k: int = 5,
+        filter_conditions: Optional[Dict] = None
+    ) -> List[Tuple[str, float]]:
+        """
+        Search using Qdrant's native sparse vectors (BM42).
+        
+        Args:
+            qdrant_client: Qdrant client instance
+            collection_name: Name of the collection
+            query: Search query text
+            sparse_manager: SparseEmbeddingsManager instance
+            k: Number of results
+            filter_conditions: Optional Qdrant filter
+            
+        Returns:
+            List of (doc_id, score) tuples
+        """
+        try:
+            # Generate sparse embedding
+            sparse_emb = sparse_manager.embed_query(query)
+            if not sparse_emb:
+                logger.warning(f"Failed to generate sparse embedding for query: {query}")
+                return []
+
+            # Prepare Qdrant SparseVector
+            # handle both models.SparseVector and DeduplicatedSparseEmbedding
+            indices = list(sparse_emb.indices)
+            values = list(sparse_emb.values)
+            
+            # Execute sparse search
+            search_results = qdrant_client.query_points(
+                collection_name=collection_name,
+                query=SparseVector(indices=indices, values=values),
+                using="sparse",
+                query_filter=filter_conditions,
+                limit=k,
+            ).points
+
+            scored_results = []
+            for result in search_results:
+                payload = result.payload
+                if not payload:
+                    continue
+                
+                doc_id = f"{payload.get('file_path', '')}_{payload.get('chunk_index', 0)}"
+                scored_results.append((doc_id, float(result.score)))
+
+            return scored_results
+
+        except Exception as e:
+            logger.error(f"Native sparse search failed for {collection_name}: {e}")
+            return []
 
 
 # Singleton instance

@@ -21,26 +21,27 @@ from functools import lru_cache
 logger = logging.getLogger(__name__)
 
 # Import custom ONNX support
+# Import custom ONNX support
 try:
     from .onnx_embeddings import (
         ONNXDenseManager, 
         ONNXSparseManager, 
         ONNXRerankerManager,
-        ONNX_RUNTIME_AVAILABLE, 
-        FASTEMBED_AVAILABLE, 
-        TextEmbedding,
+        ONNX_RUNTIME_AVAILABLE,
         ONNXRuntimeManager
     )
 except ImportError:
-    from onnx_embeddings import (
-        ONNXDenseManager, 
-        ONNXSparseManager, 
-        ONNXRerankerManager,
-        ONNX_RUNTIME_AVAILABLE, 
-        FASTEMBED_AVAILABLE, 
-        TextEmbedding,
-        ONNXRuntimeManager
-    )
+    try:
+        from onnx_embeddings import (
+            ONNXDenseManager, 
+            ONNXSparseManager, 
+            ONNXRerankerManager,
+            ONNX_RUNTIME_AVAILABLE,
+            ONNXRuntimeManager
+        )
+    except ImportError:
+        ONNX_RUNTIME_AVAILABLE = False
+        logger.debug("ONNX support not available")
 
 # Import specialized embeddings if available
 try:
@@ -57,7 +58,7 @@ class EmbeddingsManager:
 
     def __init__(
         self,
-        model_name: str = "all-MiniLM-L6-v2",
+        model_name: str = "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
         cache_dir: Optional[str] = None,
         device: Optional[str] = None,
         batch_size: int = 32,
@@ -154,6 +155,7 @@ class EmbeddingsManager:
     def encode(
         self,
         texts: Union[str, List[str]],
+        content_type: Optional[str] = None,
         batch_size: Optional[int] = None,
         convert_to_tensor: bool = False,
         show_progress_bar: Optional[bool] = None,
@@ -403,89 +405,6 @@ def should_use_specialized_embeddings(config: Optional[Dict[str, Any]] = None) -
     return _use_specialized and SPECIALIZED_EMBEDDINGS_AVAILABLE
 
 
-class FastEmbedManager:
-    """Manages dense embedding generation using fastembed (ONNX)"""
-
-    def __init__(
-        self,
-        model_name: str = "BAAI/bge-small-en-v1.5",
-        cache_dir: Optional[str] = None,
-        threads: Optional[int] = None,
-        **kwargs
-    ):
-        """
-        Initialize the fastembed manager
-
-        Args:
-            model_name: Name of the fastembed model
-            cache_dir: Directory to cache models
-            threads: Number of threads for ONNX runtime
-        """
-        self.model_name = model_name
-        self.cache_dir = cache_dir or os.path.expanduser("~/.cache/qdrant-mcp/models")
-        self.threads = threads
-        self._model = None
-        self._model_dimension = None
-
-        logger.info(f"Initialized FastEmbedManager with model: {model_name}")
-
-    @property
-    def model(self) -> Any:
-        """Lazy load the fastembed model"""
-        if self._model is None:
-            if not FASTEMBED_AVAILABLE:
-                raise ImportError("fastembed is required for FastEmbedManager. Install it with `pip install fastembed`.")
-
-            logger.info(f"Loading fastembed model: {self.model_name}")
-            self._model = TextEmbedding(
-                model_name=self.model_name,
-                cache_dir=self.cache_dir,
-                threads=self.threads
-            )
-            
-            # Get dimension from model metadata
-            # FastEmbed model info is available in .model_dict
-            self._model_dimension = next(
-                (m["dim"] for m in self._model.list_supported_models() if m["model"] == self.model_name),
-                None
-            )
-            
-            if self._model_dimension is None:
-                # Fallback: encode a dummy text to get dimension
-                logger.debug("Could not find dimension in metadata, performing dummy encoding")
-                emb = next(self._model.embed(["test"]))
-                self._model_dimension = len(emb)
-
-            logger.info(f"FastEmbed model loaded. Dimension: {self._model_dimension}")
-
-        return self._model
-
-    @property
-    def dimension(self) -> int:
-        """Get the dimension of the embedding vectors"""
-        if self._model_dimension is None:
-            _ = self.model
-        return self._model_dimension
-
-    def encode(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
-        """Encode text(s) into embeddings using fastembed"""
-        if isinstance(texts, str):
-            texts = [texts]
-
-        # fastembed.embed returns a generator
-        embeddings = list(self.model.embed(texts))
-        return np.array(embeddings, dtype=np.float32)
-
-    def get_model_info(self) -> Dict[str, Any]:
-        """Get information about the current model"""
-        return {
-            "model_name": self.model_name,
-            "dimension": self.dimension,
-            "backend": "fastembed (ONNX)",
-            "cache_dir": self.cache_dir
-        }
-
-
 class UnifiedEmbeddingsManager:
     """Unified manager that wraps both single and specialized embedding modes"""
 
@@ -499,31 +418,21 @@ class UnifiedEmbeddingsManager:
             self.manager = get_specialized_embedding_manager(specialized_config)
             logger.info("Using specialized embeddings mode")
         elif self.config.get("embeddings", {}).get("backend") in ["fastembed", "onnxruntime"]:
-            # Use ONNX mode (either fastembed or raw onnxruntime)
+            # Use ONNX mode (always use raw onnxruntime now)
             embeddings_config = self.config.get("embeddings", {})
             model_name = embeddings_config.get("model", "BAAI/bge-small-en-v1.5")
-            backend = embeddings_config.get("backend")
             
-            # Auto-detect if it's a local path
-            is_local_path = os.path.isdir(model_name)
-            
-            if backend == "onnxruntime" or (backend == "fastembed" and is_local_path):
-                # Use raw onnxruntime for local paths or if explicitly requested
+            if ONNX_RUNTIME_AVAILABLE:
                 self.manager = ONNXRuntimeManager(
                     model_path=model_name,
-                    threads=embeddings_config.get("threads")
+                    threads=embeddings_config.get("threads"),
+                    cache_dir=embeddings_config.get("cache_dir")
                 )
                 logger.info(f"Using ONNXRuntime mode: {model_name}")
             else:
-                # Use standard fastembed
-                self.manager = FastEmbedManager(
-                    model_name=model_name,
-                    cache_dir=embeddings_config.get("cache_dir"),
-                    threads=embeddings_config.get("threads")
-                )
-                logger.info(f"Using fastembed mode: {self.manager.model_name}")
+                raise ImportError("onnxruntime is required for ONNX backend.")
         else:
-            # Use single model mode
+            # Use single model mode (SentenceTransformer)
             embeddings_config = self.config.get("embeddings", {})
             self.manager = EmbeddingsManager(
                 model_name=embeddings_config.get("model", "all-MiniLM-L6-v2"),
@@ -631,7 +540,7 @@ def get_embeddings_manager(
 
     # Check if we should use specialized embeddings or fastembed backend
     use_specialized = should_use_specialized_embeddings(config)
-    use_fastembed = config.get("embeddings", {}).get("backend") == "fastembed" if config else False
+    use_fastembed = config.get("embeddings", {}).get("backend") in ["fastembed", "onnxruntime"] if config else False
 
     if use_specialized or use_fastembed:
         if _unified_manager is None:
@@ -656,3 +565,12 @@ def get_embeddings_manager(
             )
 
         return _embeddings_manager
+
+
+def reset_embeddings_manager():
+    """Reset global embeddings manager instances (mainly for testing)"""
+    global _embeddings_manager, _unified_manager, _use_specialized
+    _embeddings_manager = None
+    _unified_manager = None
+    _use_specialized = None
+    logger.debug("Reset global embeddings managers")

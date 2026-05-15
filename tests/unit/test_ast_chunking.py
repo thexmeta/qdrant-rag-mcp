@@ -5,7 +5,7 @@ Test AST chunking functionality
 
 import sys
 import os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from utils.ast_chunker import create_ast_chunker
 from indexers.code_indexer import CodeIndexer
@@ -19,7 +19,7 @@ def test_ast_chunker():
     chunker = create_ast_chunker('python', max_chunk_size=1000)
     
     # Test file
-    test_file = os.path.join(os.path.dirname(__file__), '..', 'src', 'utils', 'hybrid_search.py')
+    test_file = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'utils', 'hybrid_search.py')
     
     # Get chunks
     chunks = chunker.chunk_file(test_file)
@@ -44,7 +44,7 @@ def test_code_indexer_with_ast():
     indexer = CodeIndexer(chunk_size=1500, use_ast_chunking=True)
     
     # Test file
-    test_file = os.path.join(os.path.dirname(__file__), '..', 'src', 'utils', 'embeddings.py')
+    test_file = os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'utils', 'embeddings.py')
     
     # Index file
     chunks = indexer.index_file(test_file)

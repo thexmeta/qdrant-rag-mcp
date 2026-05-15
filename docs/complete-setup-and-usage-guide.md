@@ -375,7 +375,7 @@ QDRANT_SPARSE_MODEL=Qdrant/bm42-all-minilm-l6-v2-attentions
 
 1. **Sparse Vectors**: Creates term-frequency based sparse embeddings
 2. **Hybrid Search**: Combines dense (semantic) + sparse (keyword) matching
-3. **Fastembed Integration**: Uses Qdrant's fastembed library for efficient processing
+3. **Native ONNX**: Uses custom implementation for efficient processing without heavy dependencies
 4. **Better Precision**: Improved keyword matching over traditional BM25
 
 #### BM42 Configuration Options
@@ -388,7 +388,7 @@ QDRANT_SPARSE_MODEL=Qdrant/bm42-all-minilm-l6-v2-attentions
 #### Troubleshooting BM42
 
 **Issue**: BM42 not working
-- **Solution**: Ensure fastembed is installed: `uv pip install fastembed`
+- **Solution**: Ensure ONNX dependencies are installed: `uv pip install onnxruntime tokenizers numpy`
 
 **Issue**: Sparse collection not found
 - **Solution**: Reindex after enabling BM42 configuration

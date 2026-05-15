@@ -135,75 +135,32 @@ class QueryIntentClassifier:
         self.fallback_level = self.config.get("fallback_level", "class")
         self.logger = get_project_logger()
 
-        # Pattern definitions for different intent types
         self.patterns = {
-            "file": {
-                "keywords": [
-                    "what does",
-                    "explain",
-                    "overview",
-                    "structure",
-                    "architecture",
-                    "how does",
-                    "purpose of",
-                    "understand",
-                    "describe",
-                    "summary",
-                    "high level",
-                    "big picture",
-                    # Documentation-specific patterns
-                    "changelog",
-                    "readme",
-                    "guide",
-                    "tutorial",
-                    "documentation",
-                    "setup",
-                    "installation",
-                    "configuration",
-                    "usage",
-                ],
-                "exploration_type": "understanding",
-            },
             "method": {
                 "keywords": [
-                    "implementation",
-                    "bug in",
-                    "error in",
-                    "fix",
-                    "line",
-                    "specific",
-                    "exact",
-                    "debug",
-                    "issue",
-                    "problem",
-                    "broken",
-                    "failing",
-                    "trace",
-                    # Code-specific detailed patterns
-                    "function",
-                    "method",
-                    "parameter",
-                    "return value",
+                    "bug", "error", "fix", "debug", "issue", "problem", "broken",
+                    "line", "specific", "exact", "validation"
                 ],
                 "exploration_type": "debugging",
             },
             "class": {
                 "keywords": [
-                    "find",
-                    "where is",
-                    "show me",
-                    "locate",
-                    "search for",
-                    "looking for",
-                    "need",
-                    "want",
-                    # Navigation patterns
-                    "class",
-                    "module",
-                    "component",
-                    "service",
+                    "find", "where is", "show me", "locate", "search for", "looking for",
+                    "need", "want", "get", "handler", "manager", "controller",
+                    "class", "implementation"
                 ],
                 "exploration_type": "navigation",
+            },
+            "file": {
+                "keywords": [
+                    "system", "module", "component", "overview", "architecture",
+                    "structure", "design", "flow", "overall", "high-level",
+                    "summary", "project", "base", "core", "app", "server", "api",
+                    "describe", "guide", "tutorial", "documentation", "setup",
+                    "installation", "configuration", "usage", "readme", "service",
+                    "authentication", "payment", "caching"
+                ],
+                "exploration_type": "understanding",
             },
         }
 
@@ -213,34 +170,62 @@ class QueryIntentClassifier:
 
         # Score each level based on keyword matches
         scores = {}
+        for level in ["method", "class", "file"]:
+            scores[level] = {
+                "score": 0,
+                "matched_keywords": [],
+                "exploration_type": self.patterns[level]["exploration_type"]
+            }
+
         for level, pattern_info in self.patterns.items():
-            score = 0
-            matched_keywords = []
-
             for keyword in pattern_info["keywords"]:
-                if keyword in query_lower:
-                    score += 1
-                    matched_keywords.append(keyword)
-
-            # Normalize score by number of keywords
-            normalized_score = (
-                score / len(pattern_info["keywords"]) if pattern_info["keywords"] else 0
-            )
-            scores[level] = (
-                normalized_score,
-                matched_keywords,
-                pattern_info["exploration_type"],
-            )
+                # Check for exact word match with high weight
+                if f" {keyword} " in f" {query_lower} ":
+                    scores[level]["score"] += 10
+                    scores[level]["matched_keywords"].append(keyword)
+                # Check for substring match
+                elif keyword in query_lower:
+                    scores[level]["score"] += 2
+                    scores[level]["matched_keywords"].append(keyword)
 
         # Find the best match
-        best_level = max(scores.keys(), key=lambda k: scores[k][0])
-        best_score, matched_keywords, exploration_type = scores[best_level]
+        # Priority: method > class > file
+        ordered_levels = ["method", "class", "file"]
+        
+        # NAVIGATION BOOST: If navigation keywords are present, boost class level
+        # BUT only if it's not a debugging query
+        nav_keywords = ["find", "where is", "show me", "locate", "search for", "looking for"]
+        is_navigation = any(k in query_lower for k in nav_keywords)
+        is_debugging = scores["method"]["score"] > 0
+        
+        if is_navigation and not is_debugging:
+            scores["class"]["score"] += 15
 
-        # Calculate confidence based on score and keyword matches
-        confidence = min(0.9, best_score * 2)  # Scale up but cap at 0.9
-        if len(matched_keywords) > 2:
-            confidence = 0.9
-        elif len(matched_keywords) == 0:
+        # OVERVIEW BOOST: If overview keywords are present, boost file level
+        overview_keywords = ["overview", "describe", "architecture", "structure", "how does"]
+        is_overview = any(k in query_lower for k in overview_keywords)
+        if is_overview:
+            scores["file"]["score"] += 20
+
+        best_level = self.fallback_level
+        max_score = 0
+        
+        for level in ordered_levels:
+            if scores[level]["score"] > max_score:
+                max_score = scores[level]["score"]
+                best_level = level
+            elif scores[level]["score"] == max_score and max_score > 0:
+                # Keep current best_level as it's more specific in our ordering
+                pass
+
+        best_score = scores[best_level]["score"]
+        matched_keywords = scores[best_level]["matched_keywords"]
+        exploration_type = scores[best_level]["exploration_type"]
+
+        # Calculate confidence
+        if max_score > 0:
+            confidence = min(0.95, 0.7 + (len(matched_keywords) - 1) * 0.05)
+        else:
             confidence = 0.6
             best_level = self.fallback_level
             exploration_type = "navigation"
@@ -1008,11 +993,11 @@ class ProgressiveContextManager:
                     vector_scores_map = {}
                     result_objects_map = {}  # Store original result objects
 
-                    search_results = self.qdrant_client.search(
+                    search_results = self.qdrant_client.query_points(
                         collection_name=collection,
-                        query_vector=query_embedding,
+                        query=query_embedding,
                         limit=search_limit * 2,  # Get more for fusion
-                    )
+                    ).points
 
                     for result in search_results:
                         doc_id = f"{result.payload['file_path']}_{result.payload.get('chunk_index', 0)}"
@@ -1104,12 +1089,12 @@ class ProgressiveContextManager:
                                     ]
                                 )
 
-                                fetch_results = self.qdrant_client.search(
+                                fetch_results = self.qdrant_client.query_points(
                                     collection_name=collection,
-                                    query_vector=query_embedding,  # Use actual query vector
+                                    query=query_embedding,  # Use actual query vector
                                     query_filter=filter_conditions,
                                     limit=1,
-                                )
+                                ).points
 
                                 if fetch_results:
                                     result = fetch_results[0]
@@ -1160,12 +1145,12 @@ class ProgressiveContextManager:
                                 ]
                             )
 
-                            fetch_results = self.qdrant_client.search(
+                            fetch_results = self.qdrant_client.query_points(
                                 collection_name=collection,
-                                query_vector=query_embedding,  # Use actual query vector
+                                query=query_embedding,  # Use actual query vector
                                 query_filter=filter_conditions,
                                 limit=1,
-                            )
+                            ).points
 
                             if fetch_results:
                                 result = fetch_results[0]
@@ -1174,11 +1159,11 @@ class ProgressiveContextManager:
 
                 else:
                     # Vector search only
-                    results = self.qdrant_client.search(
+                    results = self.qdrant_client.query_points(
                         collection_name=collection,
-                        query_vector=query_embedding,
+                        query=query_embedding,
                         limit=search_limit,
-                    )
+                    ).points
 
                 # Process results based on level
                 for result in results:

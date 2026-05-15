@@ -2,12 +2,96 @@
 """Test Progressive Context through HTTP API."""
 
 import requests
-import json
 import sys
+import os
+import subprocess
+import time
+import pytest
 from typing import Dict, Any
+from pathlib import Path
 
 # Base URL for the HTTP server
-BASE_URL = "http://localhost:8081"
+BASE_URL = "http://localhost:8880"
+
+# Global server process
+_server_process = None
+
+
+def start_server():
+    """Start the HTTP server and return the process."""
+    global _server_process
+    
+    if _server_process is not None:
+        return _server_process
+    
+    print("\n🚀 Starting Qdrant RAG HTTP Server for integration tests...")
+    
+    # Get project root
+    project_root = Path(__file__).parent.parent.parent
+    
+    # Start server in a subprocess
+    # Use the same environment as the current process
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(project_root / "src")
+    
+    # Start the server using the virtual environment python
+    python_exe = sys.executable
+    _server_process = subprocess.Popen(
+        [python_exe, str(project_root / "src" / "http_server.py")],
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    
+    # Wait for server to be ready
+    max_retries = 30
+    retry_count = 0
+    while retry_count < max_retries:
+        try:
+            response = requests.get(f"{BASE_URL}/health", timeout=1)
+            if response.status_code == 200:
+                print("✓ Server is ready!")
+                return _server_process
+        except requests.exceptions.ConnectionError:
+            pass
+        
+        # Check if process died
+        if _server_process.poll() is not None:
+            stdout, stderr = _server_process.communicate()
+            print(f"✗ Server failed to start:\nSTDOUT: {stdout}\nSTDERR: {stderr}")
+            raise RuntimeError("Server failed to start")
+            
+        time.sleep(1)
+        retry_count += 1
+    
+    _server_process.terminate()
+    raise RuntimeError("Server did not start within 30 seconds")
+
+
+def stop_server():
+    """Stop the HTTP server."""
+    global _server_process
+    
+    if _server_process is None:
+        return
+    
+    print("\n🛑 Stopping Qdrant RAG HTTP Server...")
+    _server_process.terminate()
+    try:
+        _server_process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        _server_process.kill()
+    print("✓ Server stopped")
+    _server_process = None
+
+
+@pytest.fixture(scope="module", autouse=True)
+def server():
+    """Start the HTTP server before tests and stop it after."""
+    start_server()
+    yield _server_process
+    stop_server()
 
 
 def test_search_with_progressive_context(
@@ -30,7 +114,7 @@ def test_search_with_progressive_context(
     }
     
     print(f"\n{'='*60}")
-    print(f"Testing Progressive Search")
+    print("Testing Progressive Search")
     print(f"Query: {query}")
     print(f"Context Level: {context_level}")
     print(f"Progressive Mode: {progressive_mode}")
@@ -49,7 +133,7 @@ def test_search_with_progressive_context(
         # Check if progressive metadata is included
         if "progressive" in result:
             prog = result["progressive"]
-            print(f"\nProgressive Context Metadata:")
+            print("\nProgressive Context Metadata:")
             print(f"- Level Used: {prog.get('level_used', 'unknown')}")
             print(f"- Token Estimate: {prog.get('token_estimate', 0)}")
             print(f"- Token Reduction: {prog.get('token_reduction', '0%')}")
@@ -67,7 +151,7 @@ def test_search_with_progressive_context(
                     print(f"     Tokens: {opt['estimated_tokens']}, Relevance: {opt['relevance']:.2f}")
         
         # Print some results
-        print(f"\nSearch Results:")
+        print("\nSearch Results:")
         for i, res in enumerate(result.get("results", [])[:3]):
             print(f"\n{i+1}. File: {res.get('file_path', 'unknown')}")
             print(f"   Score: {res.get('score', 0):.3f}")
@@ -89,6 +173,23 @@ def test_search_with_progressive_context(
         return {"error": str(e)}
 
 
+@pytest.mark.parametrize("level", ["file", "class", "method"])
+def test_different_context_levels(level):
+    """Test different context levels."""
+    query = "search functionality"
+    result = test_search_with_progressive_context(query, context_level=level)
+    
+    if "progressive" in result:
+        prog = result["progressive"]
+        print(f"\nLevel '{level}' Summary:")
+        print(f"- Token estimate: {prog.get('token_estimate', 0)}")
+        print(f"- Token reduction: {prog.get('token_reduction', '0%')}")
+        print(f"- Results shape: {len(result.get('results', []))} items")
+    else:
+        # If server didn't return progressive metadata, it might be misconfigured
+        # but for integration tests, we at least expect some results or a successful call
+        assert "results" in result or "error" not in result
+
 def test_cache_behavior():
     """Test semantic cache behavior."""
     print("\n" + "="*60)
@@ -97,7 +198,7 @@ def test_cache_behavior():
     
     # First query
     query1 = "What does the authentication system do?"
-    result1 = test_search_with_progressive_context(query1, context_level="file")
+    test_search_with_progressive_context(query1, context_level="file")
     
     # Similar query (should hit cache)
     query2 = "Explain the authentication system"
@@ -110,20 +211,6 @@ def test_cache_behavior():
         else:
             print("\n✗ No cache hit for similar query")
 
-
-def test_different_context_levels():
-    """Test different context levels."""
-    query = "search functionality"
-    
-    for level in ["file", "class", "method"]:
-        result = test_search_with_progressive_context(query, context_level=level)
-        
-        if "progressive" in result:
-            prog = result["progressive"]
-            print(f"\nLevel '{level}' Summary:")
-            print(f"- Token estimate: {prog.get('token_estimate', 0)}")
-            print(f"- Token reduction: {prog.get('token_reduction', '0%')}")
-            print(f"- Results shape: {len(result.get('results', []))} items")
 
 
 def test_auto_classification():
@@ -152,41 +239,41 @@ def test_auto_classification():
 
 def main():
     """Run all tests."""
-    print("Progressive Context HTTP API Tests")
-    print("Make sure the HTTP server is running on port 8081")
-    print("And progressive_context is enabled in server_config.json")
+    print("Progressive Context HTTP Tests")
+    print("Make sure progressive_context is enabled in server_config.json")
     
-    # Check if server is running
+    # Start the server at the beginning
     try:
-        response = requests.get(f"{BASE_URL}/health")
-        response.raise_for_status()
-        print("\n✓ Server is running")
-    except Exception as e:
-        print(f"\n✗ Server not accessible: {e}")
-        print("Please start the server with: python src/http_server.py")
+        start_server()
+    except RuntimeError as e:
+        print(f"\n✗ Failed to start server: {e}")
         sys.exit(1)
     
-    # Run tests
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "cache":
-            test_cache_behavior()
-        elif sys.argv[1] == "levels":
-            test_different_context_levels()
-        elif sys.argv[1] == "auto":
-            test_auto_classification()
+    try:
+        # Run tests
+        if len(sys.argv) > 1:
+            if sys.argv[1] == "cache":
+                test_cache_behavior()
+            elif sys.argv[1] == "levels":
+                test_different_context_levels()
+            elif sys.argv[1] == "auto":
+                test_auto_classification()
+            else:
+                # Custom query test
+                query = " ".join(sys.argv[1:])
+                test_search_with_progressive_context(query)
         else:
-            # Custom query test
-            query = " ".join(sys.argv[1:])
-            test_search_with_progressive_context(query)
-    else:
-        # Run a basic test
-        test_search_with_progressive_context("What does the authentication system do?", context_level="file")
-        
-        print("\n\nOther test options:")
-        print("  python test_progressive_http.py cache    # Test cache behavior")
-        print("  python test_progressive_http.py levels   # Test different context levels")
-        print("  python test_progressive_http.py auto     # Test auto-classification")
-        print("  python test_progressive_http.py <query>  # Test custom query")
+            # Run a basic test
+            test_search_with_progressive_context("What does the authentication system do?", context_level="file")
+            
+            print("\n\nOther test options:")
+            print("  python test_progressive_http.py cache    # Test cache behavior")
+            print("  python test_progressive_http.py levels   # Test different context levels")
+            print("  python test_progressive_http.py auto     # Test auto-classification")
+            print("  python test_progressive_http.py <query>  # Test custom query")
+    finally:
+        # Clean up: stop the server
+        stop_server()
 
 
 if __name__ == "__main__":

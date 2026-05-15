@@ -15,13 +15,12 @@ except ImportError:
     ONNX_RUNTIME_AVAILABLE = False
     logger.debug("onnxruntime or tokenizers not available, custom ONNX support disabled")
 
-# Import fastembed
-try:
-    from fastembed import TextEmbedding, SparseTextEmbedding
-    FASTEMBED_AVAILABLE = True
-except ImportError:
-    FASTEMBED_AVAILABLE = False
-    logger.debug("fastembed not available, ONNX dense/sparse embeddings disabled")
+
+@dataclass
+class SparseEmbeddingResult:
+    """Standardized sparse embedding result compatible with Qdrant SparseVector"""
+    indices: List[int]
+    values: List[float]
 
 
 class ONNXBaseManager:
@@ -31,12 +30,87 @@ class ONNXBaseManager:
         self,
         model_path: str,
         threads: Optional[int] = None,
+        cache_dir: Optional[str] = None,
         **kwargs
     ):
-        self.model_path = model_path
+        self.cache_dir = cache_dir or os.environ.get("HF_HOME", os.path.expanduser("~/.cache/huggingface"))
+        self.original_model_path = model_path
+        self.model_path = self._resolve_model_path(model_path)
+        self.model_name = os.path.basename(self.model_path.rstrip("/"))
         self.threads = threads
         self._session = None
         self._tokenizer = None
+
+    def _resolve_model_path(self, model_name: str) -> str:
+        """
+        Resolve model name to local path.
+        Supports:
+        - Local directory paths
+        - HuggingFace model names (checks local cache or ./data/models)
+        """
+        # Explicit mapping for common model names to local directories
+        name_mapping = {
+            "all-MiniLM-L6-v2": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
+            "sentence-transformers/all-MiniLM-L6-v2": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
+            "BAAI/bge-small-en-v1.5": "./data/models/qdrant--bge-small-en-v1.5-onnx-q",
+            "nomic-ai/CodeRankEmbed": "./data/models/stella_en_400M_v5/int8", # Stella is often used as a substitute
+            "jinaai/jina-embeddings-v3": "./data/models/jina-reranker-v3-onnx-int8-NG"
+        }
+        
+        if model_name in name_mapping:
+            mapped_path = name_mapping[model_name]
+            if os.path.isdir(mapped_path):
+                return mapped_path
+
+        # Check if it's already a local directory
+        if os.path.isdir(model_name):
+            return model_name
+        
+        # Check common cache directories
+        cache_dirs = [self.cache_dir, "./data/models", "./models"]
+        
+        # Clean model name for path matching
+        clean_name = model_name.replace("/", "--").replace("sentence-transformers--", "")
+        
+        for base_dir in cache_dirs:
+            if not base_dir or not os.path.exists(base_dir):
+                continue
+                
+            # Try various naming variants
+            variants = [
+                model_name,
+                model_name.replace("/", "_"),
+                model_name.replace("/", "--"),
+                f"models--{model_name.replace('/', '--')}",
+                clean_name
+            ]
+            
+            for variant in variants:
+                potential = os.path.join(base_dir, variant)
+                # Check for direct match or deep nested hub structure
+                if os.path.isdir(potential):
+                    # Check if it's a hub snapshot directory
+                    snapshots_dir = os.path.join(potential, "snapshots")
+                    if os.path.isdir(snapshots_dir):
+                        snapshots = os.listdir(snapshots_dir)
+                        if snapshots:
+                            potential = os.path.join(snapshots_dir, snapshots[0])
+                    
+                    # Verify it has model.onnx or similar
+                    if os.path.exists(os.path.join(potential, "model.onnx")) or \
+                       os.path.exists(os.path.join(potential, "onnx", "model.onnx")) or \
+                       os.path.exists(os.path.join(potential, "int8", "model.onnx")):
+                        return potential
+
+        # Last resort: check if any of the variants exist in ./data/models directly
+        for variant in [model_name, clean_name]:
+            test_path = os.path.join("./data/models", variant)
+            if os.path.isdir(test_path):
+                return test_path
+
+        # If not found locally, we'll let the session property raise an error or we could try downloading
+        logger.warning(f"Model {model_name} not found in cache. Using as raw path.")
+        return model_name
         
     @property
     def session(self) -> Any:
@@ -46,18 +120,28 @@ class ONNXBaseManager:
                 raise ImportError("onnxruntime is required for ONNX managers.")
             
             # Check for model.onnx in the directory
-            onnx_file = os.path.join(self.model_path, "model.onnx")
-            if not os.path.exists(onnx_file):
-                # Try searching in subdirectories (like int8/ or fp16/)
-                found = False
-                for sub in ["int8", "fp16", "q4"]:
-                    test_path = os.path.join(self.model_path, sub, "model.onnx")
-                    if os.path.exists(test_path):
-                        onnx_file = test_path
-                        found = True
-                        break
-                if not found:
-                    raise FileNotFoundError(f"ONNX model file not found in {self.model_path}")
+            if os.path.isfile(self.model_path) and self.model_path.endswith(".onnx"):
+                onnx_file = self.model_path
+            else:
+                onnx_file = os.path.join(self.model_path, "model.onnx")
+                if not os.path.exists(onnx_file):
+                    # Try searching in subdirectories (like int8/, fp16/, q4/, raw/)
+                    found = False
+                    for sub in ["int8", "fp16", "q4", "raw", "onnx"]:
+                        test_path = os.path.join(self.model_path, sub, "model.onnx")
+                        if os.path.exists(test_path):
+                            onnx_file = test_path
+                            found = True
+                            break
+                    if not found:
+                        # Try searching for ANY .onnx file in the directory
+                        import glob
+                        onnx_files = glob.glob(os.path.join(self.model_path, "**/*.onnx"), recursive=True)
+                        if onnx_files:
+                            onnx_file = onnx_files[0]
+                            logger.info(f"Auto-discovered ONNX file: {onnx_file}")
+                        else:
+                            raise FileNotFoundError(f"ONNX model file not found in {self.model_path}")
             
             # Set session options
             sess_options = ort.SessionOptions()
@@ -99,6 +183,8 @@ class ONNXBaseManager:
             
             logger.info(f"Loading tokenizer from: {tokenizer_file}")
             self._tokenizer = Tokenizer.from_file(tokenizer_file)
+            # Enable truncation to 512 tokens by default to prevent ONNX errors
+            self._tokenizer.enable_truncation(max_length=512)
             
         return self._tokenizer
 
@@ -142,7 +228,7 @@ class ONNXDenseManager(ONNXBaseManager):
                 
         return self._model_dimension
 
-    def encode(self, texts: Union[str, List[str]], **kwargs) -> np.ndarray:
+    def encode(self, texts: Union[str, List[str]], content_type: Optional[str] = None, **kwargs) -> np.ndarray:
         if isinstance(texts, str):
             texts = [texts]
 
@@ -173,11 +259,18 @@ class ONNXDenseManager(ONNXBaseManager):
         return np.array(embeddings, dtype=np.float32)
 
     def get_model_info(self) -> Dict[str, Any]:
+        try:
+            dim = self.dimension
+        except Exception as e:
+            logger.warning(f"Could not determine dimension for {self.model_path}: {e}")
+            dim = None
+            
         return {
             "model_path": self.model_path,
-            "dimension": self.dimension,
+            "dimension": dim,
             "backend": "onnxruntime (Dense)",
-            "threads": self.threads
+            "threads": self.threads,
+            "is_loaded": self._session is not None
         }
 
 
@@ -214,17 +307,10 @@ class ONNXRerankerManager(ONNXBaseManager):
             
         return results
 
-
-@dataclass
-class SparseEmbedding:
-    indices: np.ndarray
-    values: np.ndarray
-
-
 class ONNXSparseManager(ONNXBaseManager):
     """Manages sparse embedding generation (BM42 style) using raw onnxruntime"""
 
-    def encode(self, texts: Union[str, List[str]], **kwargs) -> List[SparseEmbedding]:
+    def encode(self, texts: Union[str, List[str]], content_type: Optional[str] = None, **kwargs) -> List[Dict[str, Any]]:
         """Generate pseudo-sparse embeddings using attention weights if available"""
         if isinstance(texts, str):
             texts = [texts]
@@ -240,11 +326,20 @@ class ONNXSparseManager(ONNXBaseManager):
             
             if not attention_outputs:
                 # Fallback: use uniform weights for non-special tokens
-                indices = np.array(encoding.ids, dtype=np.int64)
-                attention_mask = np.array(encoding.attention_mask, dtype=np.float32)
-                # Filter out padding
-                mask = attention_mask > 0
-                results.append(SparseEmbedding(indices[mask], attention_mask[mask]))
+                indices = np.array(encoding.ids, dtype=np.int64).tolist()
+                attention_mask = np.array(encoding.attention_mask, dtype=np.float32).tolist()
+                
+                # Aggregate duplicate indices
+                unique_indices = {}
+                for idx, val in zip(indices, attention_mask):
+                    if val > 0:
+                        idx_item = int(idx)
+                        unique_indices[idx_item] = unique_indices.get(idx_item, 0.0) + float(val)
+                
+                sorted_indices = sorted(unique_indices.keys())
+                final_values = [unique_indices[idx] for idx in sorted_indices]
+                
+                results.append(SparseEmbeddingResult(indices=sorted_indices, values=final_values))
                 continue
                 
             res = self.session.run(attention_outputs, inputs)
@@ -259,12 +354,27 @@ class ONNXSparseManager(ONNXBaseManager):
             attention_mask = np.array(encoding.attention_mask, dtype=np.int64)
             mask = attention_mask > 0
             
-            # Normalize values
-            values = combined_weights[mask]
-            if values.max() > 0:
-                values = values / values.max()
+            indices = indices[mask]
+            weights = combined_weights[mask]
+            
+            # Aggregate duplicate indices (sum values)
+            unique_indices = {}
+            for idx, val in zip(indices, weights):
+                idx_item = int(idx)
+                unique_indices[idx_item] = unique_indices.get(idx_item, 0.0) + float(val)
+            
+            sorted_indices = sorted(unique_indices.keys())
+            final_values = [unique_indices[idx] for idx in sorted_indices]
+            
+            # Normalize final values
+            max_val = max(final_values) if final_values else 0
+            if max_val > 0:
+                final_values = [v / max_val for v in final_values]
                 
-            results.append(SparseEmbedding(indices[mask], values))
+            results.append(SparseEmbeddingResult(
+                indices=sorted_indices,
+                values=final_values
+            ))
             
         return results
 

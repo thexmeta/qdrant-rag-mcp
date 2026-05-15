@@ -25,8 +25,8 @@ class Config:
 
     def _load_config(self) -> Dict[str, Any]:
         """Load configuration from file and environment variables"""
-        # Default configuration
-        default_config = {
+        # 1. Start with default configuration
+        config = {
             "server": {
                 "name": "qdrant-rag-server",
                 "host": "0.0.0.0",
@@ -41,13 +41,13 @@ class Config:
                 "https": False,
             },
             "embeddings": {
-                "model": "all-MiniLM-L6-v2",
+                "model": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
                 "cache_dir": "./data/models",
                 "device": "auto",
                 "batch_size": 32,
                 "normalize_embeddings": True,
                 "show_progress_bar": True,
-                "backend": "sentence-transformers",  # Default backend
+                "backend": "onnxruntime",
             },
             "indexing": {
                 "chunk_size": 2000,
@@ -55,6 +55,16 @@ class Config:
                 "code_chunk_size": 3000,
                 "code_chunk_overlap": 600,
                 "batch_size": 100,
+            },
+            "hybrid_search": {
+                "sparse_method": "bm42",
+                "sparse_model": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
+                "weights": {
+                    "code": {"vector": 0.5, "bm25": 0.5},
+                    "documentation": {"vector": 0.6, "bm25": 0.4},
+                    "config": {"vector": 0.6, "bm25": 0.4},
+                    "general": {"vector": 0.6, "bm25": 0.4},
+                },
             },
             "search": {
                 "max_results": 10,
@@ -69,23 +79,29 @@ class Config:
             },
         }
 
-        # Load from file if exists
+        # 2. Apply environment variables as fallbacks (legacy method)
+        config = self._apply_env_vars(config)
+
+        # 3. Load from JSON file if exists (high priority - overrides env vars)
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r") as f:
                     file_config = json.load(f)
-                default_config = self._deep_merge(default_config, file_config)
+                config = self._deep_merge(config, file_config)
                 logger.info(f"Loaded configuration from {self.config_path}")
             except Exception as e:
                 logger.warning(f"Failed to load config file: {e}. Using defaults.")
 
-        # Resolve environment variable substitutions
-        config = self._resolve_env_vars(default_config)
+        # 4. Resolve environment variable substitutions (e.g., ${VAR:-default})
+        # This allows the JSON to explicitly opt-in to environment variables
+        config = self._resolve_env_vars(config)
 
-        # Override with environment variables (legacy method)
+        # 5. Final override with environment variables (legacy method)
+        # This ensures that even if a literal was in JSON, an explicit ENV VAR wins
+        # satisfying standard dev expectations and existing tests.
         config = self._apply_env_vars(config)
 
-        # Post-process to convert string booleans and numbers
+        # 5. Post-process to convert string booleans and numbers
         config = self._post_process_config(config)
 
         return config

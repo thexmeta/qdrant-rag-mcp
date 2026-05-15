@@ -9,6 +9,7 @@ import sys
 import time
 import json
 import requests
+import pytest
 from pathlib import Path
 
 # Add parent directory to path
@@ -164,6 +165,7 @@ def index_documentation_files():
             print(f"✗ Failed to index: {response.status_code}")
             print(f"  Error: {response.text}")
 
+@pytest.mark.skipif(not wait_for_server(), reason="Server not running at localhost:8081")
 def test_search_with_specialized_models():
     """Test searching with different models"""
     print("\n=== Testing Search with Specialized Models ===")

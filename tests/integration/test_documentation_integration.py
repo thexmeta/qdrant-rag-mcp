@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 # Set up environment
 os.environ["QDRANT_HOST"] = "localhost"
+os.environ["QDRANT__SERVICE__API_KEY"] = "Qd-11112345"
 os.environ["QDRANT_PORT"] = "6333"
 os.environ["EMBEDDING_MODEL"] = "all-MiniLM-L6-v2"
 

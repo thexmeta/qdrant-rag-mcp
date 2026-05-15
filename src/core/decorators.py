@@ -112,8 +112,29 @@ def github_operation(
                 _github_instances = instances
                 
                 try:
-                    # Call the actual function with its original signature
-                    result = func(*args, **kwargs)
+                    # Check if the function expects 'instances' in its signature
+                    import inspect
+                    sig = inspect.signature(func)
+                    
+                    if 'instances' in sig.parameters:
+                        # Inject instances if expected (backward compatibility)
+                        # We need to handle both positional and keyword arguments
+                        if 'instances' in kwargs:
+                            # Already provided in kwargs
+                            result = func(*args, **kwargs)
+                        else:
+                            # Inject as first positional argument or keyword argument
+                            # Check if we can bind it
+                            try:
+                                bound_args = sig.bind(instances, *args, **kwargs)
+                                result = func(*bound_args.args, **bound_args.kwargs)
+                            except TypeError:
+                                # Fallback: try keyword injection
+                                kwargs['instances'] = instances
+                                result = func(*args, **kwargs)
+                    else:
+                        # Standard call (modern approach: use get_github_instances())
+                        result = func(*args, **kwargs)
                     
                     # Log success
                     console_logger.info(
@@ -148,9 +169,20 @@ def github_operation(
                 import re
                 import json
                 
-                sig = inspect.signature(func)
-                bound_args = sig.bind(*args, **kwargs)
-                bound_args.apply_defaults()
+                context_params = {}
+                try:
+                    sig = inspect.signature(func)
+                    # If we injected instances, we should remove it from binding attempt if it's not expected by caller
+                    temp_args = args
+                    temp_kwargs = kwargs.copy()
+                    
+                    # We only care about user-provided parameters for the error context
+                    bound_args = sig.bind(*temp_args, **temp_kwargs)
+                    bound_args.apply_defaults()
+                    context_params = {k: v for k, v in bound_args.arguments.items() if k != 'instances'}
+                except Exception as bind_error:
+                    logger.debug(f"Failed to bind arguments for error context: {bind_error}")
+                    context_params = {"raw_args": str(args), "raw_kwargs": str(kwargs)}
                 
                 # Parse error details for better error codes and messages
                 error_str = str(e)

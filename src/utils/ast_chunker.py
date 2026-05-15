@@ -52,6 +52,7 @@ class PythonASTChunker:
         
     def chunk_file(self, file_path: str) -> List[ASTChunk]:
         """Parse Python file and create hierarchical chunks"""
+        content = ""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -530,6 +531,7 @@ class ShellScriptChunker:
         
     def chunk_file(self, file_path: str) -> List[ASTChunk]:
         """Parse Shell script and create structural chunks"""
+        content = ""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()
@@ -733,6 +735,7 @@ class GoChunker:
         
     def chunk_file(self, file_path: str) -> List[ASTChunk]:
         """Parse Go file and create structural chunks"""
+        content = ""
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 content = f.read()

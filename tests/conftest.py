@@ -12,6 +12,10 @@ sys.path.insert(0, str(src_path))
 
 # Common fixtures can be added here
 import pytest
+from dotenv import load_dotenv
+
+# Load environment variables from .env if it exists
+load_dotenv()
 
 @pytest.fixture
 def temp_test_dir(tmp_path):
@@ -72,3 +76,8 @@ pip install test-project
 ```
 """)
     return file_path
+
+@pytest.fixture
+def query():
+    """Return a default test query"""
+    return "What does the authentication system do?"

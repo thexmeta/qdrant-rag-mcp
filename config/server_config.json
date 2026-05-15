@@ -8,19 +8,19 @@
   "qdrant": {
     "host": "${QDRANT_HOST:-localhost}",
     "port": "${QDRANT_PORT:-6333}",
-    "api_key": "${QDRANT_API_KEY:-}",
+    "api_key": "Qd-11112345",
     "grpc_port": "${QDRANT_GRPC_PORT:-6334}",
     "https": false
   },
   "embeddings": {
-    "model": "./data/models/stella_en_400M_v5/int8",
+    "model": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
     "device": "cpu",
     "batch_size": 32,
     "normalize_embeddings": true,
     "show_progress_bar": true,
-    "query_prefix": "s2p_query: ",
-    "requires_query_prefix": true,
-    "backend": "fastembed"
+    "query_prefix": "",
+    "requires_query_prefix": false,
+    "backend": "onnxruntime"
   },
   "sparse_embeddings": {
     "model": "./data/models/qdrant_all_miniLM_L6_v2_with_attentions",
@@ -323,7 +323,7 @@
         "dimension": 384,
         "max_tokens": 256,
         "description": "General purpose embeddings and backward compatibility",
-        "backend": "fastembed"
+        "backend": "onnxruntime"
       }
     },
     "memory": {

@@ -29,14 +29,15 @@ User Query
     │    └─> all-MiniLM-L12-v2        │
     │                                  ├──> Hybrid Score ──> Results
     ├──> Sparse Embedding (BM42) ─────┘
-         └─> fastembed (ONNX)
+         └─> Native ONNX Runtime
 ```
 
-### Fastembed Integration
+### Native ONNX Implementation
 
-BM42 uses Qdrant's fastembed library for efficient sparse vector generation:
+BM42 uses a custom ONNX Runtime implementation for efficient sparse vector generation without heavy external dependencies:
 
 - **Model**: `Qdrant/all_miniLM_L6_v2_with_attentions`
+- **Engine**: `onnxruntime` + `tokenizers`
 - **Format**: ONNX (optimized for inference)
 - **Method**: BM42 (attention-based sparse embeddings)
 
@@ -82,11 +83,11 @@ In `config/server_config.json`:
 ### Step 1: Install Dependencies
 
 ```bash
-# Ensure fastembed is installed
-uv pip install fastembed
+# Core dependencies for ONNX
+uv pip install onnxruntime tokenizers numpy
 
-# Or with requirements.txt
-uv pip install -r requirements.txt
+# Optional: fastembed is no longer required but can be installed for fallback
+uv pip install fastembed
 ```
 
 ### Step 2: Configure Environment
@@ -201,10 +202,10 @@ Where `α` is typically 0.5-0.7 depending on use case.
 **Symptoms**: No sparse vectors being generated
 
 **Solutions**:
-1. Verify fastembed installation: `uv pip show fastembed`
+1. Verify ONNX dependencies: `uv pip show onnxruntime tokenizers`
 2. Check environment variables are set
-3. Verify model path exists or can be downloaded
-4. Check server logs for model loading errors
+3. Verify model path exists in `./data/models/` or can be downloaded
+4. Check server logs for ONNX session initialization errors
 
 ### Issue: Sparse Collection Not Found
 

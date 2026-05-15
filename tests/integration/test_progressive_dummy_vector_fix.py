@@ -7,13 +7,15 @@ import json
 import numpy as np
 from pathlib import Path
 
-# Add parent directory to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add parent and src directories to path
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, root_dir)
+sys.path.insert(0, os.path.join(root_dir, "src"))
 
 from src.utils.progressive_context import ProgressiveContextManager
-from src.utils.embeddings import get_embedding_model
+from src.utils.embeddings import UnifiedEmbeddingsManager
 from qdrant_client import QdrantClient
-from qdrant_client.models import VectorParams, Distance
+from qdrant_client.models import VectorParams, Distance, PointStruct
 
 def test_progressive_no_dummy_vectors():
     """Test that progressive context preserves original vector search scores."""
@@ -21,17 +23,23 @@ def test_progressive_no_dummy_vectors():
     # Initialize test client (in-memory)
     client = QdrantClient(":memory:")
     
+    # Disable specialized embeddings for this test to avoid ONNX model loading
+    os.environ["QDRANT_SPECIALIZED_EMBEDDINGS_ENABLED"] = "false"
+    
     # Create test collection
     collection_name = "test_collection"
-    embedding_dim = 384  # For all-MiniLM-L6-v2
+    embedding_dim = 384  # For all-MiniLM-L6-v2 (default)
     
     client.create_collection(
         collection_name=collection_name,
         vectors_config=VectorParams(size=embedding_dim, distance=Distance.COSINE)
     )
     
-    # Get embedding model
-    embed_model = get_embedding_model()
+    # Get embedding manager - force sentence-transformers to avoid ONNX issues in this env
+    embed_manager = UnifiedEmbeddingsManager(config={
+        "embeddings": {"backend": "sentence-transformers"},
+        "specialized_embeddings": {"enabled": False}
+    })
     
     # Add test documents
     test_docs = [
@@ -61,40 +69,41 @@ def test_progressive_no_dummy_vectors():
     # Index documents
     points = []
     for doc in test_docs:
-        embedding = embed_model.embed_documents([doc["content"]])[0]
-        points.append({
-            "id": doc["id"],
-            "vector": embedding,
-            "payload": {
+        # UnifiedEmbeddingsManager.encode returns embeddings
+        embedding = embed_manager.encode([doc["content"]])[0]
+        points.append(PointStruct(
+            id=doc["id"],
+            vector=embedding.tolist() if hasattr(embedding, "tolist") else embedding,
+            payload={
                 "content": doc["content"],
                 "file_path": doc["file_path"],
                 "chunk_index": doc["chunk_index"],
                 "chunk_type": doc["chunk_type"]
             }
-        })
+        ))
     
     client.upsert(collection_name=collection_name, points=points)
     
     # Initialize progressive context manager
     context_manager = ProgressiveContextManager(
         qdrant_client=client,
-        collections=[collection_name],
-        cache_dir="./test_cache"
+        embeddings=embed_manager,
+        config={"levels": {"snippet": {"n_results": 3}}}
     )
     
     # Test query
     query = "authentication user login"
-    query_embedding = embed_model.embed_documents([query])[0]
+    query_embedding = embed_manager.encode([query])[0]
     
     # Test hybrid search (the problematic mode)
     print("\n=== Testing Hybrid Search ===")
     results = context_manager._search_at_level(
         query=query,
-        query_embedding=query_embedding,
-        n_results=3,
         level="snippet",
-        search_collections=[collection_name],
-        search_mode="hybrid"
+        n_results=3,
+        cross_project=True,  # Use all collections (including our test one)
+        search_mode="hybrid",
+        include_dependencies=False
     )
     
     print(f"Found {len(results)} results")
@@ -118,11 +127,11 @@ def test_progressive_no_dummy_vectors():
     print("\n\n=== Testing Keyword Search ===")
     results_keyword = context_manager._search_at_level(
         query=query,
-        query_embedding=query_embedding,
-        n_results=3,
         level="snippet",
-        search_collections=[collection_name],
-        search_mode="keyword"
+        n_results=3,
+        cross_project=True,
+        search_mode="keyword",
+        include_dependencies=False
     )
     
     print(f"Found {len(results_keyword)} keyword results")

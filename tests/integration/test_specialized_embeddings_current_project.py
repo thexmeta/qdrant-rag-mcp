@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import requests
+import pytest
 from pathlib import Path
 
 # Base URL for HTTP API
@@ -21,7 +22,12 @@ def test_current_project_search():
     
     # 1. Check health and current context
     print("\n1. Checking server health and context...")
-    response = requests.get(f"{BASE_URL}/health")
+    try:
+        response = requests.get(f"{BASE_URL}/health", timeout=5)
+    except requests.exceptions.ConnectionError:
+        pytest.skip("Server not running at localhost:8081")
+        return
+    
     if response.status_code == 200:
         health = response.json()
         print(f"✓ Server healthy")

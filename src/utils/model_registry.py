@@ -126,6 +126,8 @@ class ModelRegistry:
             return 768
         elif 'instructor' in model_name.lower():
             return 768
+        elif 'stella' in model_name.lower():
+            return 1024
         else:
             return 384  # Default
     

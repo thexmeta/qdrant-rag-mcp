@@ -10,17 +10,18 @@ sys.path.append(str(project_root / "src"))
 from src.utils.embeddings import get_embeddings_manager
 from src.config import get_config
 
-def test_fastembed_backend():
-    # Force fastembed backend in config
+def test_onnxruntime_backend():
+    # Force onnxruntime backend in config with local model path
+    model_path = "./data/models/qdrant_all_miniLM_L6_v2_with_attentions"
     config = {
         "embeddings": {
-            "backend": "fastembed",
-            "model": "BAAI/bge-small-en-v1.5",
+            "backend": "onnxruntime",
+            "model": model_path,
             "cache_dir": "./data/models"
         }
     }
     
-    print("Initializing manager with fastembed backend...")
+    print(f"Initializing manager with onnxruntime backend and model: {model_path}")
     manager = get_embeddings_manager(config)
     
     print(f"Manager type: {type(manager)}")
@@ -33,17 +34,17 @@ def test_fastembed_backend():
     print(f"Embedding shape: {embedding.shape}")
     print(f"First 5 elements: {embedding[0][:5]}")
     
-    assert embedding.shape == (1, 384)  # BGE small dimension is 384
-    print("✓ FastEmbed backend test passed!")
+    # qdrant_all_miniLM_L6_v2 dimension is 384
+    assert embedding.shape == (1, 384)
+    print("✓ ONNX Runtime backend test passed!")
 
 if __name__ == "__main__":
     try:
-        import fastembed
-        print(f"FastEmbed version: {fastembed.__version__}")
-        test_fastembed_backend()
-    except ImportError as e:
-        print(f"ImportError: {e}")
-        print("FastEmbed not installed, skipping test.")
+        from src.utils.onnx_embeddings import ONNX_RUNTIME_AVAILABLE
+        if ONNX_RUNTIME_AVAILABLE:
+            test_onnxruntime_backend()
+        else:
+            print("onnxruntime not available, skipping test.")
     except Exception as e:
         print(f"Error: {e}")
         import traceback

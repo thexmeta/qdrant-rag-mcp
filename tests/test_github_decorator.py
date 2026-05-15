@@ -41,9 +41,10 @@ class MockLogger:
 
 # Test function using the decorator
 @github_operation("list test repositories")
-def test_list_repos(instances, owner: Optional[str] = None) -> Dict[str, Any]:
+def test_list_repos(owner: Optional[str] = None) -> Dict[str, Any]:
     """Test function that lists repositories."""
-    github_client, _, _, _, _ = instances
+    from core.decorators import get_github_instances
+    github_client, _, _, _, _ = get_github_instances()
     repositories = github_client.list_repositories(owner)
     
     return {

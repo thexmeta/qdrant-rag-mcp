@@ -18,6 +18,13 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     
     def setUp(self):
         """Set up test fixtures"""
+        # Reset global state to prevent cross-test interference
+        from utils.embeddings import reset_embeddings_manager, should_use_specialized_embeddings
+        reset_embeddings_manager()
+        # Force re-evaluation of specialized mode for each test
+        import utils.embeddings
+        utils.embeddings._use_specialized = None
+        
         self.config = {
             'specialized_embeddings': {
                 'enabled': True,
@@ -36,9 +43,6 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.get_specialized_embedding_manager')
     def test_specialized_mode_initialization(self, mock_get_specialized):
         """Test initialization in specialized embeddings mode"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_specialized_manager = Mock()
         mock_get_specialized.return_value = mock_specialized_manager
@@ -54,9 +58,6 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.EmbeddingsManager')
     def test_single_mode_initialization(self, mock_embeddings_manager):
         """Test initialization in single model mode when specialized not available"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_single_manager = Mock()
         mock_embeddings_manager.return_value = mock_single_manager
@@ -73,9 +74,6 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.EmbeddingsManager')
     def test_env_var_disables_specialized(self, mock_embeddings_manager):
         """Test that environment variable can disable specialized embeddings"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_single_manager = Mock()
         mock_embeddings_manager.return_value = mock_single_manager
@@ -89,12 +87,9 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.get_specialized_embedding_manager')
     def test_encode_with_content_type(self, mock_get_specialized):
         """Test encoding with content type in specialized mode"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_specialized_manager = Mock()
-        mock_specialized_manager.encode = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
+        mock_specialized_manager.encode = Mock(side_effect=lambda texts, content_type=None, **kwargs: np.array([[0.1, 0.2, 0.3]]))
         mock_get_specialized.return_value = mock_specialized_manager
         
         manager = UnifiedEmbeddingsManager(self.config)
@@ -110,12 +105,9 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.get_specialized_embedding_manager')
     def test_encode_without_content_type_defaults_to_general(self, mock_get_specialized):
         """Test that encoding without content type defaults to general"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_specialized_manager = Mock()
-        mock_specialized_manager.encode = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
+        mock_specialized_manager.encode = Mock(side_effect=lambda texts, content_type=None, **kwargs: np.array([[0.1, 0.2, 0.3]]))
         mock_get_specialized.return_value = mock_specialized_manager
         
         manager = UnifiedEmbeddingsManager(self.config)
@@ -130,9 +122,6 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.EmbeddingsManager')
     def test_encode_in_single_mode(self, mock_embeddings_manager):
         """Test encoding in single model mode"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_single_manager = Mock()
         # The UnifiedEmbeddingsManager checks for encode_batch first
@@ -150,9 +139,6 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.get_specialized_embedding_manager')
     def test_get_dimension_specialized(self, mock_get_specialized):
         """Test getting dimension in specialized mode"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_specialized_manager = Mock()
         mock_specialized_manager.get_dimension = Mock(return_value=768)
@@ -162,20 +148,19 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
         
         # Test with content type
         dim = manager.get_dimension("code")
+        # Unified manager calls manager.get_dimension("code")
         mock_specialized_manager.get_dimension.assert_called_with("code")
         self.assertEqual(dim, 768)
         
-        # Test without content type - should default to general
+        # Test without content type - should default to general (also 768 in this mock)
         dim = manager.get_dimension()
         mock_specialized_manager.get_dimension.assert_called_with("general")
+        self.assertEqual(dim, 768)
     
     @patch('utils.embeddings.SPECIALIZED_EMBEDDINGS_AVAILABLE', False)
     @patch('utils.embeddings.EmbeddingsManager')
     def test_get_dimension_single(self, mock_embeddings_manager):
         """Test getting dimension in single mode"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_single_manager = Mock()
         mock_single_manager.dimension = 384
@@ -190,9 +175,6 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.get_specialized_embedding_manager')
     def test_backward_compatibility_methods(self, mock_get_specialized):
         """Test backward compatibility methods"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_specialized_manager = Mock()
         mock_specialized_manager.get_dimension = Mock(return_value=512)
@@ -207,6 +189,7 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
         
         # Test dimension property
         dim = manager.dimension
+        # It should return the dimension from the specialized manager (512 in this mock)
         self.assertEqual(dim, 512)
         
         # Test model_name property
@@ -217,9 +200,6 @@ class TestUnifiedEmbeddingsManager(unittest.TestCase):
     @patch('utils.embeddings.get_specialized_embedding_manager')
     def test_get_model_info(self, mock_get_specialized):
         """Test getting model info"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         mock_specialized_manager = Mock()
         mock_specialized_manager.get_model_info = Mock(return_value={"info": "test"})
@@ -266,9 +246,6 @@ class TestShouldUseSpecializedEmbeddings(unittest.TestCase):
     @patch.dict(os.environ, {'QDRANT_SPECIALIZED_EMBEDDINGS_ENABLED': 'false'})
     def test_env_var_override(self):
         """Test that environment variable can override default"""
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         self.assertFalse(should_use_specialized_embeddings())
     
@@ -277,9 +254,6 @@ class TestShouldUseSpecializedEmbeddings(unittest.TestCase):
         """Test that config can override default"""
         config = {'specialized_embeddings': {'enabled': False}}
         
-        # Clear cached value
-        import utils.embeddings
-        utils.embeddings._use_specialized = None
         
         self.assertFalse(should_use_specialized_embeddings(config))
     

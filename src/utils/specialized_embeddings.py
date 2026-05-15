@@ -8,7 +8,7 @@ specialized models optimized for different content types (code, config, docs).
 import os
 import logging
 import threading
-from collections import OrderedDict
+from collections import OrderedDict, Counter
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Union, Tuple, Set
 from datetime import datetime
@@ -18,9 +18,13 @@ from sentence_transformers import SentenceTransformer
 
 # Import custom ONNX support
 try:
-    from .onnx_embeddings import ONNXRuntimeManager, ONNX_RUNTIME_AVAILABLE, FASTEMBED_AVAILABLE, TextEmbedding
+    from .onnx_embeddings import ONNXRuntimeManager, ONNX_RUNTIME_AVAILABLE
 except ImportError:
-    from onnx_embeddings import ONNXRuntimeManager, ONNX_RUNTIME_AVAILABLE, FASTEMBED_AVAILABLE, TextEmbedding
+    try:
+        from onnx_embeddings import ONNXRuntimeManager, ONNX_RUNTIME_AVAILABLE
+    except ImportError:
+        ONNX_RUNTIME_AVAILABLE = False
+        logger.debug("ONNX support not available")
 
 from .logging import get_project_logger
 from .memory_manager import MemoryComponent, get_memory_manager
@@ -36,7 +40,8 @@ class SpecializedEmbeddingManager(MemoryComponent):
                  cache_dir: Optional[str] = None,
                  device: Optional[str] = None,
                  max_models_in_memory: int = None,
-                 memory_limit_gb: float = None):
+                 memory_limit_gb: float = None,
+                 backend: Optional[str] = None):
         """
         Initialize the specialized embedding manager
         
@@ -73,51 +78,21 @@ class SpecializedEmbeddingManager(MemoryComponent):
         # Register with memory manager
         memory_manager.register_component("specialized_embeddings", self)
         
-        # Initialize default model configurations
+        # Apply initial default configurations
         self.model_configs = self._build_default_configs()
         
-        # Apply custom configuration if provided
+        # Apply custom configuration if provided (overrides defaults)
         if config:
             if 'models' in config:
                 self._merge_config(config['models'])
         
-        # Initialize properties (order matters - set defaults first, then let config override)
+        # Apply Apple Silicon optimizations if detected (unless disabled)
         self.device = device or self._auto_detect_device()
-        self.max_models_in_memory = max_models_in_memory
-        self.memory_limit_gb = memory_limit_gb
+        self.max_models_in_memory = max_models_in_memory or int(component_limits.get('max_items', 3))
+        self.memory_limit_gb = memory_limit_gb or (float(component_limits.get('max_memory_mb', 4000)) / 1024)
         self.cache_dir = cache_dir or os.path.expanduser("~/.cache/qdrant-mcp/models")
         
-        # Apply Apple Silicon optimizations if detected (unless disabled)
-        if memory_manager.is_apple_silicon and self.device == "mps":
-            # Check if conservative limits are disabled
-            if not os.getenv('QDRANT_DISABLE_APPLE_SILICON_LIMITS', '').lower() == 'true':
-                # Conservative limits for unified memory architecture
-                if self.memory_limit_gb > 3.0:
-                    logger.info(f"Reducing memory limit from {self.memory_limit_gb}GB to 3.0GB for Apple Silicon")
-                    self.memory_limit_gb = 3.0
-                if self.max_models_in_memory > 2:
-                    logger.info(f"Reducing max models from {self.max_models_in_memory} to 2 for Apple Silicon")
-                    self.max_models_in_memory = 2
-            else:
-                logger.info(f"Apple Silicon limits disabled - using configured limits: {self.memory_limit_gb}GB, {self.max_models_in_memory} models")
-        
-        # Apply memory settings from config or env vars
-        if config and 'memory' in config:
-            memory_config = config['memory']
-            if isinstance(memory_config.get('max_models_in_memory'), (int, str)):
-                try:
-                    self.max_models_in_memory = int(memory_config['max_models_in_memory'])
-                except ValueError:
-                    pass
-            if isinstance(memory_config.get('memory_limit_gb'), (float, str)):
-                try:
-                    self.memory_limit_gb = float(memory_config['memory_limit_gb'])
-                except ValueError:
-                    pass
-            if 'cache_dir' in memory_config:
-                self.cache_dir = os.path.expanduser(memory_config['cache_dir'])
-        
-        # Override with environment variables if set
+        # Override with environment variables if set (highest priority)
         if os.getenv('QDRANT_MAX_MODELS_IN_MEMORY'):
             try:
                 self.max_models_in_memory = int(os.getenv('QDRANT_MAX_MODELS_IN_MEMORY'))
@@ -131,6 +106,17 @@ class SpecializedEmbeddingManager(MemoryComponent):
         if os.getenv('QDRANT_MODEL_CACHE_DIR'):
             self.cache_dir = os.path.expanduser(os.getenv('QDRANT_MODEL_CACHE_DIR'))
         
+        # Re-check model specific env vars to ensure they take precedence over config
+        env_model_vars = {
+            'code': 'QDRANT_CODE_EMBEDDING_MODEL',
+            'config': 'QDRANT_CONFIG_EMBEDDING_MODEL',
+            'documentation': 'QDRANT_DOC_EMBEDDING_MODEL',
+            'general': 'QDRANT_GENERAL_EMBEDDING_MODEL'
+        }
+        for content_type, env_var in env_model_vars.items():
+            if os.getenv(env_var):
+                self.model_configs[content_type]['name'] = os.getenv(env_var)
+        
         # LRU cache for loaded models
         self.loaded_models: OrderedDict[str, Any] = OrderedDict()
         
@@ -141,8 +127,22 @@ class SpecializedEmbeddingManager(MemoryComponent):
         self.memory_usage: Dict[str, float] = {}
         self.total_memory_used_gb = 0.0
         
+        # Default backend from config or environment
+        if backend is None:
+            if config and 'backend' in config:
+                self.default_backend = config['backend']
+            else:
+                try:
+                    from config import get_config
+                    self.default_backend = get_config().get('embeddings.backend', 'onnxruntime')
+                except ImportError:
+                    self.default_backend = 'onnxruntime'
+        else:
+            self.default_backend = backend
+        
         # Active model tracking to prevent eviction during use
-        self.active_models: Set[str] = set()
+        # Use a Counter for reference counting (important for nested/concurrent loads)
+        self.active_models: Counter = Counter()
         
         # Model usage statistics
         self.usage_stats: Dict[str, Dict[str, int]] = {
@@ -160,32 +160,32 @@ class SpecializedEmbeddingManager(MemoryComponent):
         """Build default model configurations from environment variables"""
         return {
             'code': {
-                'name': os.getenv('QDRANT_CODE_EMBEDDING_MODEL', 'nomic-ai/CodeRankEmbed'),
-                'dimension': 768,
-                'fallback': os.getenv('QDRANT_CODE_EMBEDDING_FALLBACK', 'microsoft/codebert-base'),
-                'max_tokens': 2048,  # Reduced from 8192 to prevent memory issues
+                'name': os.getenv('QDRANT_CODE_EMBEDDING_MODEL', './data/models/stella_en_400M_v5/int8'),
+                'dimension': 1024,
+                'fallback': os.getenv('QDRANT_CODE_EMBEDDING_FALLBACK', './data/models/qdrant_all_miniLM_L6_v2_with_attentions'),
+                'max_tokens': 2048,
                 'description': 'Optimized for code understanding across multiple languages',
-                'query_prefix': os.getenv('QDRANT_CODE_QUERY_PREFIX', None),  # Allow override via env
-                'requires_query_prefix': True  # Flag to indicate if model needs special query handling
+                'query_prefix': os.getenv('QDRANT_CODE_QUERY_PREFIX', None),
+                'requires_query_prefix': False
             },
             'config': {
-                'name': os.getenv('QDRANT_CONFIG_EMBEDDING_MODEL', 'jinaai/jina-embeddings-v3'),
+                'name': os.getenv('QDRANT_CONFIG_EMBEDDING_MODEL', './data/models/stella_en_400M_v5/int8'),
                 'dimension': 1024,
-                'fallback': os.getenv('QDRANT_CONFIG_EMBEDDING_FALLBACK', 'jinaai/jina-embeddings-v2-base-en'),
+                'fallback': os.getenv('QDRANT_CONFIG_EMBEDDING_FALLBACK', './data/models/qdrant_all_miniLM_L6_v2_with_attentions'),
                 'max_tokens': 8192,
                 'description': 'Specialized for configuration files (JSON, YAML, etc.)'
             },
             'documentation': {
-                'name': os.getenv('QDRANT_DOC_EMBEDDING_MODEL', 'hkunlp/instructor-large'),
-                'dimension': 768,
-                'fallback': os.getenv('QDRANT_DOC_EMBEDDING_FALLBACK', 'sentence-transformers/all-mpnet-base-v2'),
+                'name': os.getenv('QDRANT_DOC_EMBEDDING_MODEL', './data/models/stella_en_400M_v5/int8'),
+                'dimension': 1024,
+                'fallback': os.getenv('QDRANT_DOC_EMBEDDING_FALLBACK', './data/models/qdrant_all_miniLM_L6_v2_with_attentions'),
                 'instruction_prefix': os.getenv('QDRANT_DOC_INSTRUCTION_PREFIX', 
                                                'Represent the technical documentation for retrieval:'),
                 'max_tokens': 512,
                 'description': 'Optimized for technical documentation with instruction support'
             },
             'general': {
-                'name': os.getenv('QDRANT_GENERAL_EMBEDDING_MODEL', 'sentence-transformers/all-MiniLM-L6-v2'),
+                'name': os.getenv('QDRANT_GENERAL_EMBEDDING_MODEL', './data/models/qdrant_all_miniLM_L6_v2_with_attentions'),
                 'dimension': 384,
                 'fallback': None,
                 'max_tokens': 256,
@@ -333,7 +333,7 @@ class SpecializedEmbeddingManager(MemoryComponent):
             # Build list of eviction candidates (excluding active and protected models)
             candidates = []
             for model_name in self.loaded_models:
-                if model_name not in self.active_models and model_name != protect_model:
+                if self.active_models[model_name] <= 0 and model_name != protect_model:
                     candidates.append(model_name)
             
             if not candidates:
@@ -371,6 +371,10 @@ class SpecializedEmbeddingManager(MemoryComponent):
         logger.info(f"Evicted model {lru_model_name} from memory. "
                    f"Current memory usage: {self.total_memory_used_gb:.1f}GB")
     
+    def get_model_config(self, content_type: str) -> Dict[str, Any]:
+        """Get the configuration for a specific content type"""
+        return self.model_configs.get(content_type, self.model_configs['general'])
+
     def load_model(self, content_type: str) -> Tuple[Any, Dict[str, Any]]:
         """
         Load a model for the specified content type with LRU eviction
@@ -398,7 +402,7 @@ class SpecializedEmbeddingManager(MemoryComponent):
                 return self.loaded_models[model_name], model_config
             
             # Mark model as active immediately to prevent eviction during loading
-            self.active_models.add(model_name)
+            self.active_models[model_name] += 1
         
         try:
             # Check memory constraints
@@ -423,24 +427,46 @@ class SpecializedEmbeddingManager(MemoryComponent):
                 os.environ['HF_HUB_CACHE'] = str(Path(self.cache_dir).resolve())
             
             # Load model with MPS optimization if applicable
-            backend = model_config.get('backend', os.getenv('QDRANT_EMBEDDINGS_BACKEND', 'sentence-transformers'))
+            backend = model_config.get('backend', os.getenv('QDRANT_EMBEDDINGS_BACKEND', self.default_backend))
             
-            # Auto-detect if it's a local path
-            is_local_path = os.path.isdir(model_name)
+            # Resolve model path
+            model_path = model_name
+            if not os.path.isdir(model_path):
+                potential_path = os.path.join(self.cache_dir, model_name.replace("/", "_"))
+                if os.path.isdir(potential_path):
+                    model_path = potential_path
+                else:
+                    potential_path = os.path.join(self.cache_dir, model_name)
+                    if os.path.isdir(potential_path):
+                        model_path = potential_path
             
-            if (backend == 'onnxruntime' or (backend == 'fastembed' and is_local_path)) and ONNX_RUNTIME_AVAILABLE:
-                logger.info(f"Loading {model_name} using ONNXRuntime (Custom)")
+            # Check for model existence if using ONNX/FastEmbed
+            if backend in ['onnxruntime', 'fastembed']:
+                # Check for model.onnx or similar in the model path
+                onnx_exists = False
+                potential_paths = [
+                    model_path,
+                    os.path.join(self.cache_dir, model_name.replace("/", "_")),
+                    os.path.join(self.cache_dir, model_name)
+                ]
+                
+                for p in potential_paths:
+                    if os.path.exists(os.path.join(p, "model.onnx")) or \
+                       os.path.exists(os.path.join(p, "onnx", "model.onnx")):
+                        onnx_exists = True
+                        break
+                
+                if not onnx_exists:
+                    logger.warning(f"ONNX model not found for {model_name}, falling back to sentence-transformers")
+                    backend = 'sentence-transformers'
+            
+            if (backend == 'onnxruntime' or backend == 'fastembed') and ONNX_RUNTIME_AVAILABLE:
+                logger.info(f"Loading {model_name} using ONNXRuntime from {model_path}")
                 model = ONNXRuntimeManager(
-                    model_path=model_name
-                )
-                self.model_backends[model_name] = 'onnxruntime'
-            elif backend == 'fastembed' and FASTEMBED_AVAILABLE:
-                logger.info(f"Loading {model_name} using FastEmbed (ONNX)")
-                model = TextEmbedding(
-                    model_name=model_name,
+                    model_path=model_path,
                     cache_dir=self.cache_dir
                 )
-                self.model_backends[model_name] = 'fastembed'
+                self.model_backends[model_name] = 'onnxruntime'
             else:
                 logger.info(f"Loading {model_name} using SentenceTransformer")
                 model = self._load_model_with_mps_optimization(model_name, content_type)
@@ -492,24 +518,15 @@ class SpecializedEmbeddingManager(MemoryComponent):
                 
                 if general_dim == current_dim:
                     logger.warning(f"Falling back to general model for {content_type} (dimension-compatible: {current_dim}D)")
-                    # Remove from active set before recursive call
-                    with self._lock:
-                        self.active_models.discard(model_name)
                     return self.load_model('general')
                 else:
                     logger.error(f"Cannot fall back to general model for {content_type}: "
                                 f"dimension mismatch ({current_dim}D vs {general_dim}D)")
-                    # Remove from active set
-                    with self._lock:
-                        self.active_models.discard(model_name)
             
             raise RuntimeError(f"Unable to load any embedding model for {content_type}")
         finally:
-            # Always remove model from active set if loading failed
-            # (successful loads keep it active until encode completes)
             with self._lock:
-                if model_name not in self.loaded_models:
-                    self.active_models.discard(model_name)
+                self.active_models[model_name] = max(0, self.active_models[model_name] - 1)
     
     def _load_model_with_mps_optimization(self, model_name: str, content_type: str) -> SentenceTransformer:
         """Load model with Apple Silicon MPS optimizations"""
@@ -680,7 +697,7 @@ class SpecializedEmbeddingManager(MemoryComponent):
         
         # Mark model as active to prevent eviction during encoding
         with self._lock:
-            self.active_models.add(model_name)
+            self.active_models[model_name] += 1
         
         try:
             # Update usage statistics
@@ -844,7 +861,7 @@ class SpecializedEmbeddingManager(MemoryComponent):
         finally:
             # Always remove model from active set when done
             with self._lock:
-                self.active_models.discard(model_name)
+                self.active_models[model_name] = max(0, self.active_models[model_name] - 1)
     
     def get_dimension(self, content_type: str = 'general') -> int:
         """Get the embedding dimension for a content type"""

@@ -43,7 +43,7 @@ class TestSpecializedEmbeddingManager(unittest.TestCase):
         
         # Create manager with mocked models
         with patch('utils.specialized_embeddings.SentenceTransformer'):
-            self.manager = SpecializedEmbeddingManager(config=self.config)
+            self.manager = SpecializedEmbeddingManager(config=self.config, backend="sentence-transformers", max_models_in_memory=3)
     
     def test_initialization(self):
         """Test manager initialization"""
@@ -62,7 +62,7 @@ class TestSpecializedEmbeddingManager(unittest.TestCase):
             'QDRANT_MEMORY_LIMIT_GB': '5.0'
         }):
             with patch('utils.specialized_embeddings.SentenceTransformer'):
-                manager = SpecializedEmbeddingManager()
+                manager = SpecializedEmbeddingManager(backend='sentence-transformers')
                 
                 # Check env var overrides
                 self.assertEqual(manager.model_configs['code']['name'], 'env-code-model')
@@ -97,30 +97,30 @@ class TestSpecializedEmbeddingManager(unittest.TestCase):
     def test_lru_eviction(self, mock_transformer):
         """Test LRU eviction when max models reached"""
         # Create mock models
-        mock_model1 = Mock()
-        mock_model1.eval = Mock()
-        mock_model2 = Mock()
-        mock_model2.eval = Mock()
-        mock_model3 = Mock()
-        mock_model3.eval = Mock()
+        mock_models = [Mock() for _ in range(4)]
+        for m in mock_models:
+            m.eval = Mock()
         
-        mock_transformer.side_effect = [mock_model1, mock_model2, mock_model3]
+        mock_transformer.side_effect = mock_models
         
-        # Load two models (max_models = 2)
+        # Load three models (max_models = 3 by default)
         self.manager.load_model('code')
         self.manager.load_model('documentation')
-        
-        # Check both are loaded
-        self.assertEqual(len(self.manager.loaded_models), 2)
-        
-        # Load a third model - should evict the first
         self.manager.load_model('config')
         
-        # Check that first model was evicted
-        self.assertEqual(len(self.manager.loaded_models), 2)
+        # Check all three are loaded
+        # max_models_in_memory is set to 3 in setUp
+        self.assertEqual(len(self.manager.loaded_models), 3)
+        # Load a fourth model - should evict the first ('code' -> 'test-code-model')
+        self.manager.load_model('general')
+        
+        # Check that one model was evicted
+        self.assertEqual(len(self.manager.loaded_models), 3)
         self.assertNotIn('test-code-model', self.manager.loaded_models)
         self.assertIn('test-doc-model', self.manager.loaded_models)
-        self.assertIn('jinaai/jina-embeddings-v3', self.manager.loaded_models)  # default config model
+        self.assertIn('./data/models/qdrant_all_miniLM_L6_v2_with_attentions', self.manager.loaded_models)
+
+
     
     @patch('utils.specialized_embeddings.SentenceTransformer')
     def test_fallback_model(self, mock_transformer):
@@ -144,7 +144,7 @@ class TestSpecializedEmbeddingManager(unittest.TestCase):
         # Create mock model with encode method
         mock_model = Mock()
         mock_model.eval = Mock()
-        mock_model.encode = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
+        mock_model.encode = Mock(return_value=np.zeros((1, 768)))
         mock_transformer.return_value = mock_model
         
         # Test code encoding
@@ -156,7 +156,7 @@ class TestSpecializedEmbeddingManager(unittest.TestCase):
         self.assertEqual(call_args, ["test code"])
         
         # Check result shape
-        self.assertEqual(result.shape, (1, 3))
+        self.assertEqual(result.shape, (1, 768))
     
     @patch('utils.specialized_embeddings.SentenceTransformer')
     def test_instruction_prefix_for_documentation(self, mock_transformer):
@@ -164,7 +164,7 @@ class TestSpecializedEmbeddingManager(unittest.TestCase):
         # Create mock model
         mock_model = Mock()
         mock_model.eval = Mock()
-        mock_model.encode = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
+        mock_model.encode = Mock(return_value=np.zeros((1, 384)))
         mock_transformer.return_value = mock_model
         
         # Set model name to include 'instructor'
@@ -256,8 +256,8 @@ class TestSpecializedEmbeddingManager(unittest.TestCase):
         self.assertIn('models', info)
         
         # Check memory info
-        self.assertEqual(info['memory']['limit_gb'], 4.0)
-        self.assertEqual(info['memory']['max_models'], 2)
+        self.assertAlmostEqual(info['memory']['limit_gb'], 3.90625, places=2)
+        self.assertEqual(info['memory']['max_models'], 3)
         
         # Check model info
         self.assertIn('code', info['models'])

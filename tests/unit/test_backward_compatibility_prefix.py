@@ -8,13 +8,14 @@ import sys
 from pathlib import Path
 
 # Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 # Make sure the env var is NOT set
 if 'QDRANT_CODE_QUERY_PREFIX' in os.environ:
     del os.environ['QDRANT_CODE_QUERY_PREFIX']
 
 from utils.specialized_embeddings import SpecializedEmbeddingManager
+from config import get_config
 
 
 def test_backward_compatibility():
@@ -23,6 +24,7 @@ def test_backward_compatibility():
     print("Testing backward compatibility (no env var set)...")
     
     # Create manager without any custom prefix env var
+    get_config().reload()
     manager = SpecializedEmbeddingManager()
     
     # Get the code model config
@@ -59,6 +61,7 @@ def test_empty_string_behavior():
     # Set env var to empty string
     os.environ['QDRANT_CODE_QUERY_PREFIX'] = ""
     
+    get_config().reload()
     manager = SpecializedEmbeddingManager()
     code_config = manager.model_configs.get('code', {})
     
@@ -83,6 +86,7 @@ def test_custom_prefix():
     # Set a custom prefix
     os.environ['QDRANT_CODE_QUERY_PREFIX'] = "Find code that implements:"
     
+    get_config().reload()
     manager = SpecializedEmbeddingManager()
     code_config = manager.model_configs.get('code', {})
     

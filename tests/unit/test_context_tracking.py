@@ -105,13 +105,13 @@ def test_context_warnings():
     print("✓ Low usage returns OK status")
     
     # Simulate moderate usage (65%)
-    tracker.total_tokens_estimate = 32500
+    tracker.total_tokens_estimate = 130000
     status = check_context_usage(tracker)
     assert status["warning"] == "MODERATE_CONTEXT_USAGE"
     print(f"✓ Moderate usage warning at {status['usage_percent']:.0f}%")
     
     # Simulate high usage (85%)
-    tracker.total_tokens_estimate = 42500
+    tracker.total_tokens_estimate = 170000
     status = check_context_usage(tracker)
     assert status["warning"] == "HIGH_CONTEXT_USAGE"
     print(f"✓ High usage warning at {status['usage_percent']:.0f}%")

@@ -1,6 +1,6 @@
 [project]
 name = "qdrant-rag-mcp"
-version = "0.3.6-b2"
+version = "0.3.6-b4"
 description = "Qdrant RAG MCP Server"
 requires-python = ">=3.12"
 dependencies = [
@@ -27,7 +27,6 @@ dependencies = [
     "aiohttp>=3.8.0,<4.0.0",
     "onnxruntime>=1.20.1,<2.0.0",
     "tokenizers>=0.21.0,<1.0.0",
-    "fastembed>=0.5.1,<1.0.0",
 ]
 
 [build-system]
@@ -61,5 +60,6 @@ performance = [
 models = [
     "einops>=0.8.0",                # Required for nomic-ai/CodeRankEmbed and jinaai/jina-embeddings-v3
     "InstructorEmbedding>=1.0.0",   # Required for hkunlp/instructor-large
-    "huggingface-hub[hf_xet]"       # Better download performance for models
+    "huggingface-hub[hf_xet]",      # Better download performance for models
+    "fastembed>=0.5.1,<1.0.0"       # Now optional
 ]

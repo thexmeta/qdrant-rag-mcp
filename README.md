@@ -44,7 +44,7 @@ A context-aware Model Context Protocol (MCP) server that provides semantic searc
 
 ### 🆕 BM42 Sparse Embeddings (v0.3.5)
 - **🔍 Superior Keyword Matching**: BM42 sparse vector embeddings for precise term-based retrieval
-- **⚡ Fastembed Integration**: Uses Qdrant's fastembed library for efficient sparse vector generation
+- **⚡ Native ONNX Runtime**: Custom implementation for efficient sparse vector generation without heavy dependencies
 - **🎯 Hybrid Search Enhancement**: Combines dense semantic search with sparse keyword matching
 - **📦 Pre-configured Models**: `Qdrant/all_miniLM_L6_v2_with_attentions` for BM42 sparse embeddings
 - **🔧 Configurable**: Enable/disable via `QDRANT_SPARSE_METHOD` and `QDRANT_SPARSE_MODEL` env vars
@@ -565,8 +565,14 @@ export QDRANT_LOG_DIR=/custom/path   # Custom log directory
 
 ## 📈 Recent Improvements
 
-### 🚀 v0.3.5 (Latest) - BM42 Sparse Embeddings & GitHub Optionality
-- ✅ **BM42 Sparse Embeddings Support**: Native Qdrant BM42 via fastembed for superior keyword matching
+### 🚀 v0.3.6 (Latest) - Pure ONNX Runtime Pipeline
+- ✅ **Removed FastEmbed Dependency**: Migrated to native `onnxruntime` + `tokenizers` for all embedding types
+- ✅ **Stabilized Sparse Search**: Eliminated compatibility regressions by migrating from `fastembed` to a native `onnxruntime` pipeline
+- ✅ **Robust Path Resolution**: Intelligent local and HuggingFace cache model discovery
+- ✅ **Reduced Installation Footprint**: Core library no longer requires heavy `fastembed` dependencies
+
+### 🚀 v0.3.5 - BM42 Sparse Embeddings & GitHub Optionality
+- ✅ **BM42 Sparse Embeddings Support**: Native Qdrant BM42 for superior keyword matching
 - ✅ **GitHub Tool Optionality**: `GITHUB_ENABLED` environment variable for optional GitHub MCP tools
 - ✅ **Installation Script Improvements**: Dynamic path resolution, enhanced environment handling
 - ✅ **Configuration Examples**: Comprehensive `.env.test` with BM42, GitHub, and memory settings
